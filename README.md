@@ -13,6 +13,46 @@
 
 Former2 allows you to generate Infrastructure-as-Code outputs from your existing resources within your AWS account. By making the relevant calls using the AWS JavaScript SDK, Former2 will scan across your infrastructure and present you with the list of resources for you to choose which to generate outputs for.
 
+## This is a personal fork
+
+Upstream ([`iann0036/former2`](https://github.com/iann0036/former2)) has been unmaintained since ~2021. This fork carries local changes (extra Terraform coverage, a server-side helper that removes the browser-extension requirement, dark mode, a Tailscale/Docker deployment).
+
+### Remotes
+
+| Name | URL | Use |
+| --- | --- | --- |
+| `origin` | `git@github.com:virtualbeck/former2.git` (SSH) | **push here** — this fork |
+| `upstream` | `https://github.com/iann0036/former2.git` | fetch-only; push is disabled |
+
+If a clone ever comes up with only `origin` pointing at upstream, fix it with:
+
+```sh
+git remote rename origin upstream
+git remote set-url --push upstream DISABLED
+git remote add origin git@github.com:virtualbeck/former2.git
+git config user.email "virtualbeck@users.noreply.github.com"   # GitHub blocks pushes that expose the private gmail address
+```
+
+### Day-to-day
+
+```sh
+# push your work
+git push origin master
+
+# pull in anything new from upstream (rare)
+git fetch upstream
+git merge upstream/master        # or: git rebase upstream/master
+git push origin master
+```
+
+Work directly on `master` (no PRs — it's a private fork). After editing the mapping files under `js/services/`, regenerate the coverage report:
+
+```sh
+python3 util/generateCoverage.py
+```
+
+Local-only files kept out of git: `.env` (contains the Tailscale auth key), `docker-compose.yml.bak`, `ts-former2/` (Tailscale state).
+
 ## Installation
 
 Though [some AWS services](https://github.com/aws/aws-sdk-js/blob/master/SERVICES.md) do not require it, you will need to install the Former2 Helper browser extension in order to have support for all AWS services. The extension exists to bypass a lack of CORS on some services, such as S3 and IAM.
@@ -24,6 +64,8 @@ Though [some AWS services](https://github.com/aws/aws-sdk-js/blob/master/SERVICE
 [Install Former2 Helper for Microsoft Edge](https://microsoftedge.microsoft.com/addons/detail/okkjnfohglnomdbpimkcdkiojbeiedof)
 
 Alternatively, you can [download and install](https://github.com/iann0036/former2-helper) the extension yourself.
+
+**This fork:** instead of the extension, you can run the server-side helper (`util/ssr.js` — `npm install express aws-sdk && node util/ssr.js`) and set Settings → "Server-side Helper" to its URL (`/ssr` when reverse-proxied on the same origin, as the bundled `docker-compose.yml` + `util/nginx-former2.conf` do). This covers every service, including the CORS-less ones. Credentials are sent from the browser to that helper on each call and only held for the duration of the call.
 
 ## Usage
 
