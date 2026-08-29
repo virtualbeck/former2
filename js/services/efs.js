@@ -275,19 +275,41 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['FileSystemPolicy'] = obj.data.FileSystemPolicy;
         reqParams.cfn['BackupPolicy'] = obj.data.BackupPolicy;
         reqParams.cfn['AvailabilityZoneName'] = obj.data.AvailabilityZoneName;
+        reqParams.tf['availability_zone_name'] = obj.data.AvailabilityZoneName;
+
+        var efsFsLogicalId = getResourceName('efs', obj.id, 'AWS::EFS::FileSystem');
 
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('efs', obj.id, 'AWS::EFS::FileSystem'),
+            'logicalId': efsFsLogicalId,
             'region': obj.region,
             'service': 'efs',
             'type': 'AWS::EFS::FileSystem',
             'terraformType': 'aws_efs_file_system',
             'options': reqParams,
             'returnValues': {
-                'Ref': obj.data.FileSystemId
+                'Ref': obj.data.FileSystemId,
+                'Terraform': {
+                    'id': obj.data.FileSystemId,
+                    'arn': obj.data.FileSystemArn
+                }
             }
         });
+
+        // Terraform models the file system policy as a separate resource.
+        if (obj.data.FileSystemPolicy) {
+            tracked_resources.push({
+                'obj': obj,
+                'logicalId': efsFsLogicalId + 'Policy',
+                'region': obj.region,
+                'service': 'efs',
+                'terraformType': 'aws_efs_file_system_policy',
+                'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {}, 'tf': {
+                    'file_system_id': obj.data.FileSystemId,
+                    'policy': obj.data.FileSystemPolicy
+                } }
+            });
+        }
     } else if (obj.type == "efs.mounttarget") {
         reqParams.cfn['FileSystemId'] = obj.data.FileSystemId;
         reqParams.tf['file_system_id'] = obj.data.FileSystemId;
@@ -320,18 +342,50 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['PosixUser'] = obj.data.PosixUser;
         reqParams.cfn['RootDirectory'] = obj.data.RootDirectory;
 
+        reqParams.tf['file_system_id'] = obj.data.FileSystemId;
+        if (obj.data.PosixUser) {
+            reqParams.tf['posix_user'] = {
+                'gid': obj.data.PosixUser.Gid,
+                'uid': obj.data.PosixUser.Uid,
+                'secondary_gids': obj.data.PosixUser.SecondaryGids
+            };
+        }
+        if (obj.data.RootDirectory) {
+            reqParams.tf['root_directory'] = {
+                'path': obj.data.RootDirectory.Path,
+                'creation_info': obj.data.RootDirectory.CreationInfo ? {
+                    'owner_gid': obj.data.RootDirectory.CreationInfo.OwnerGid,
+                    'owner_uid': obj.data.RootDirectory.CreationInfo.OwnerUid,
+                    'permissions': obj.data.RootDirectory.CreationInfo.Permissions
+                } : undefined
+            };
+        }
+        if (obj.data.Tags) {
+            reqParams.tf['tags'] = new Map();
+            obj.data.Tags.forEach(tag => {
+                if (!tag.Key.startsWith("aws:")) {
+                    reqParams.tf['tags'].set(tag['Key'], tag['Value']);
+                }
+            });
+        }
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('efs', obj.id, 'AWS::EFS::AccessPoint'),
             'region': obj.region,
             'service': 'efs',
             'type': 'AWS::EFS::AccessPoint',
+            'terraformType': 'aws_efs_access_point',
             'options': reqParams,
             'returnValues': {
                 'Ref': obj.data.AccessPoint,
                 'GetAtt': {
                     'AccessPointId': obj.data.AccessPointId,
                     'Arn': obj.data.AccessPointArn
+                },
+                'Terraform': {
+                    'id': obj.data.AccessPointId,
+                    'arn': obj.data.AccessPointArn
                 }
             }
         });

@@ -2709,9 +2709,11 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             - Resource Tag
         */
 
+        var tgLogicalId = getResourceName('elbv2', obj.id, 'AWS::ElasticLoadBalancingV2::TargetGroup');
+
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('elbv2', obj.id, 'AWS::ElasticLoadBalancingV2::TargetGroup'),
+            'logicalId': tgLogicalId,
             'region': obj.region,
             'service': 'elbv2',
             'type': 'AWS::ElasticLoadBalancingV2::TargetGroup',
@@ -2721,9 +2723,39 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 'Ref': obj.data.TargetGroupArn,
                 'GetAtt': {
                     'TargetGroupName': obj.data.TargetGroupName
+                },
+                'Terraform': {
+                    'id': obj.data.TargetGroupArn,
+                    'arn': obj.data.TargetGroupArn
                 }
             }
         });
+
+        // Registered targets - CloudFormation embeds these on the target group,
+        // Terraform models each as a standalone aws_lb_target_group_attachment.
+        if (obj.data.Targets) {
+            obj.data.Targets.forEach((target, idx) => {
+                if (!target.Target || !target.Target.Id) {
+                    return;
+                }
+                tracked_resources.push({
+                    'obj': obj,
+                    'logicalId': tgLogicalId + 'Attachment' + idx,
+                    'region': obj.region,
+                    'service': 'elbv2',
+                    'terraformType': 'aws_lb_target_group_attachment',
+                    'options': {
+                        'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {},
+                        'tf': {
+                            'target_group_arn': obj.data.TargetGroupArn,
+                            'target_id': target.Target.Id,
+                            'port': target.Target.Port,
+                            'availability_zone': target.Target.AvailabilityZone
+                        }
+                    }
+                });
+            });
+        }
     } else if (obj.type == "ec2.volume") {
         reqParams.cfn['AvailabilityZone'] = obj.data.AvailabilityZone;
         reqParams.tf['availability_zone'] = obj.data.AvailabilityZone;
@@ -3992,6 +4024,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'options': reqParams
         });
     } else if (obj.type == "applicationautoscaling.scalabletarget") {
+        var aasTargetLogicalId = getResourceName('applicationautoscaling', obj.id, 'AWS::ApplicationAutoScaling::ScalableTarget');
         reqParams.cfn['MaxCapacity'] = obj.data.MaxCapacity;
         reqParams.cfn['MinCapacity'] = obj.data.MinCapacity;
         reqParams.cfn['ResourceId'] = obj.data.ResourceId;
@@ -4019,14 +4052,61 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         }
         reqParams.cfn['SuspendedState'] = obj.data.SuspendedState;
 
+        reqParams.tf['max_capacity'] = obj.data.MaxCapacity;
+        reqParams.tf['min_capacity'] = obj.data.MinCapacity;
+        reqParams.tf['resource_id'] = obj.data.ResourceId;
+        reqParams.tf['role_arn'] = obj.data.RoleARN;
+        reqParams.tf['scalable_dimension'] = obj.data.ScalableDimension;
+        reqParams.tf['service_namespace'] = obj.data.ServiceNamespace;
+
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('applicationautoscaling', obj.id, 'AWS::ApplicationAutoScaling::ScalableTarget'),
+            'logicalId': aasTargetLogicalId,
             'region': obj.region,
             'service': 'applicationautoscaling',
             'type': 'AWS::ApplicationAutoScaling::ScalableTarget',
-            'options': reqParams
+            'terraformType': 'aws_appautoscaling_target',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.ResourceId,
+                    'resource_id': obj.data.ResourceId
+                }
+            }
         });
+
+        // Terraform models scheduled actions as a standalone resource rather
+        // than a nested block on the target (as CloudFormation does).
+        if (obj.data.ScheduledActions) {
+            obj.data.ScheduledActions.forEach((scheduledaction, idx) => {
+                var satf = {
+                    'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {},
+                    'tf': {
+                        'name': scheduledaction.ScheduledActionName,
+                        'service_namespace': obj.data.ServiceNamespace,
+                        'resource_id': obj.data.ResourceId,
+                        'scalable_dimension': obj.data.ScalableDimension,
+                        'schedule': scheduledaction.Schedule,
+                        'timezone': scheduledaction.Timezone,
+                        'start_time': scheduledaction.StartTime ? new Date(scheduledaction.StartTime).toISOString() : undefined,
+                        'end_time': scheduledaction.EndTime ? new Date(scheduledaction.EndTime).toISOString() : undefined,
+                        'scalable_target_action': scheduledaction.ScalableTargetAction ? {
+                            'min_capacity': scheduledaction.ScalableTargetAction.MinCapacity,
+                            'max_capacity': scheduledaction.ScalableTargetAction.MaxCapacity
+                        } : undefined
+                    }
+                };
+
+                tracked_resources.push({
+                    'obj': obj,
+                    'logicalId': aasTargetLogicalId + 'ScheduledAction' + idx,
+                    'region': obj.region,
+                    'service': 'applicationautoscaling',
+                    'terraformType': 'aws_appautoscaling_scheduled_action',
+                    'options': satf
+                });
+            });
+        }
     } else if (obj.type == "applicationautoscaling.scalingpolicy") {
         reqParams.cfn['PolicyName'] = obj.data.PolicyName;
         reqParams.cfn['PolicyType'] = obj.data.PolicyType;
@@ -4088,6 +4168,53 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             };
         }
 
+        reqParams.tf['name'] = obj.data.PolicyName;
+        reqParams.tf['policy_type'] = obj.data.PolicyType;
+        reqParams.tf['resource_id'] = obj.data.ResourceId;
+        reqParams.tf['scalable_dimension'] = obj.data.ScalableDimension;
+        reqParams.tf['service_namespace'] = obj.data.ServiceNamespace;
+        if (obj.data.StepScalingPolicyConfiguration) {
+            var sspc = obj.data.StepScalingPolicyConfiguration;
+            reqParams.tf['step_scaling_policy_configuration'] = {
+                'adjustment_type': sspc.AdjustmentType,
+                'cooldown': sspc.Cooldown,
+                'metric_aggregation_type': sspc.MetricAggregationType,
+                'min_adjustment_magnitude': sspc.MinAdjustmentMagnitude,
+                'step_adjustment': (Array.isArray(sspc.StepAdjustments) ? sspc.StepAdjustments : (sspc.StepAdjustments ? [sspc.StepAdjustments] : [])).map(sa => ({
+                    'metric_interval_lower_bound': (sa.MetricIntervalLowerBound !== undefined && sa.MetricIntervalLowerBound !== null) ? sa.MetricIntervalLowerBound.toString() : undefined,
+                    'metric_interval_upper_bound': (sa.MetricIntervalUpperBound !== undefined && sa.MetricIntervalUpperBound !== null) ? sa.MetricIntervalUpperBound.toString() : undefined,
+                    'scaling_adjustment': sa.ScalingAdjustment
+                }))
+            };
+        }
+        if (obj.data.TargetTrackingScalingPolicyConfiguration) {
+            var ttspc = obj.data.TargetTrackingScalingPolicyConfiguration;
+            var cms = undefined;
+            if (ttspc.CustomizedMetricSpecification) {
+                cms = {
+                    'metric_name': ttspc.CustomizedMetricSpecification.MetricName,
+                    'namespace': ttspc.CustomizedMetricSpecification.Namespace,
+                    'statistic': ttspc.CustomizedMetricSpecification.Statistic,
+                    'unit': ttspc.CustomizedMetricSpecification.Unit,
+                    'dimensions': (ttspc.CustomizedMetricSpecification.Dimensions || []).map(d => ({
+                        'name': d.Name,
+                        'value': d.Value
+                    }))
+                };
+            }
+            reqParams.tf['target_tracking_scaling_policy_configuration'] = {
+                'target_value': ttspc.TargetValue,
+                'disable_scale_in': ttspc.DisableScaleIn,
+                'scale_in_cooldown': ttspc.ScaleInCooldown,
+                'scale_out_cooldown': ttspc.ScaleOutCooldown,
+                'predefined_metric_specification': ttspc.PredefinedMetricSpecification ? {
+                    'predefined_metric_type': ttspc.PredefinedMetricSpecification.PredefinedMetricType,
+                    'resource_label': ttspc.PredefinedMetricSpecification.ResourceLabel
+                } : undefined,
+                'customized_metric_specification': cms
+            };
+        }
+
         /*
         TODO:
         ScalingTargetId
@@ -4099,7 +4226,14 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'applicationautoscaling',
             'type': 'AWS::ApplicationAutoScaling::ScalingPolicy',
-            'options': reqParams
+            'terraformType': 'aws_appautoscaling_policy',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.PolicyName,
+                    'arn': obj.data.PolicyARN
+                }
+            }
         });
     } else if (obj.type == "ec2.keypair") {
         reqParams.tf['public_key'] = 'REPLACEME';

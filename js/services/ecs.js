@@ -1308,13 +1308,30 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         };
         if (obj.data.tags && obj.data.tags.length) {
             reqParams.cfn['Tags'] = [];
+            reqParams.tf['tags'] = {};
             obj.data.tags.forEach(tag => {
                 reqParams.cfn['Tags'].push({
                     'Key': tag.key,
                     'Value': tag.value
                 });
+                reqParams.tf['tags'][tag.key] = tag.value;
             });
         }
+
+        reqParams.tf['name'] = obj.data.name;
+        var asgp = obj.data.autoScalingGroupProvider || {};
+        reqParams.tf['auto_scaling_group_provider'] = {
+            'auto_scaling_group_arn': asgp.autoScalingGroupArn,
+            'managed_termination_protection': asgp.managedTerminationProtection,
+            'managed_draining': asgp.managedDraining,
+            'managed_scaling': asgp.managedScaling ? {
+                'maximum_scaling_step_size': asgp.managedScaling.maximumScalingStepSize,
+                'minimum_scaling_step_size': asgp.managedScaling.minimumScalingStepSize,
+                'status': asgp.managedScaling.status,
+                'target_capacity': asgp.managedScaling.targetCapacity,
+                'instance_warmup_period': asgp.managedScaling.instanceWarmupPeriod
+            } : undefined
+        };
 
         tracked_resources.push({
             'obj': obj,
@@ -1322,7 +1339,14 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'ecs',
             'type': 'AWS::ECS::CapacityProvider',
-            'options': reqParams/*,
+            'terraformType': 'aws_ecs_capacity_provider',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.name,
+                    'arn': obj.data.capacityProviderArn
+                }
+            }/*,
             'returnValues': {
                 'Import': {
                     'Cluster': obj.data.clusterArn,

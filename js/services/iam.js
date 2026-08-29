@@ -950,6 +950,7 @@ async function updateDatatableSecurityIdentityAndComplianceIAM() {
 
 service_mapping_functions.push(function(reqParams, obj, tracked_resources){
     if (obj.type == "iam.user") {
+        var iamUserLogicalId = getResourceName('iam', obj.id, 'AWS::IAM::User');
         reqParams.cfn['Path'] = obj.data.Path;
         reqParams.tf['path'] = obj.data.Path;
         reqParams.cfn['UserName'] = obj.data.UserName;
@@ -986,7 +987,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
 
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('iam', obj.id, 'AWS::IAM::User'),
+            'logicalId': iamUserLogicalId,
             'region': obj.region,
             'service': 'iam',
             'type': 'AWS::IAM::User',
@@ -995,10 +996,47 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'returnValues': {
                 'Import': {
                     'UserName': obj.data.UserName
+                },
+                'Terraform': {
+                    'id': obj.data.UserName,
+                    'name': obj.data.UserName,
+                    'arn': obj.data.Arn
                 }
             }
         });
+
+        // Terraform models managed-policy attachments and group memberships as
+        // standalone resources rather than inline lists on aws_iam_user.
+        if (obj.data.AttachedPolicies && obj.data.AttachedPolicies.length) {
+            obj.data.AttachedPolicies.forEach((attachedpolicy, idx) => {
+                tracked_resources.push({
+                    'obj': obj,
+                    'logicalId': iamUserLogicalId + 'PolicyAttachment' + idx,
+                    'region': obj.region,
+                    'service': 'iam',
+                    'terraformType': 'aws_iam_user_policy_attachment',
+                    'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {}, 'tf': {
+                        'user': obj.data.UserName,
+                        'policy_arn': attachedpolicy.PolicyArn
+                    } }
+                });
+            });
+        }
+        if (obj.data.Groups && obj.data.Groups.length) {
+            tracked_resources.push({
+                'obj': obj,
+                'logicalId': iamUserLogicalId + 'GroupMembership',
+                'region': obj.region,
+                'service': 'iam',
+                'terraformType': 'aws_iam_user_group_membership',
+                'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {}, 'tf': {
+                    'user': obj.data.UserName,
+                    'groups': obj.data.Groups
+                } }
+            });
+        }
     } else if (obj.type == "iam.group") {
+        var iamGroupLogicalId = getResourceName('iam', obj.id, 'AWS::IAM::Group');
         reqParams.cfn['Path'] = obj.data.Path;
         reqParams.tf['path'] = obj.data.Path;
         reqParams.cfn['GroupName'] = obj.data.GroupName;
@@ -1016,7 +1054,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
 
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('iam', obj.id, 'AWS::IAM::Group'),
+            'logicalId': iamGroupLogicalId,
             'region': obj.region,
             'service': 'iam',
             'type': 'AWS::IAM::Group',
@@ -1029,9 +1067,30 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 },
                 'Import': {
                     'GroupName': obj.data.GroupName
+                },
+                'Terraform': {
+                    'id': obj.data.GroupName,
+                    'name': obj.data.GroupName,
+                    'arn': obj.data.Arn
                 }
             }
         });
+
+        if (obj.data.AttachedPolicies && obj.data.AttachedPolicies.length) {
+            obj.data.AttachedPolicies.forEach((attachedpolicy, idx) => {
+                tracked_resources.push({
+                    'obj': obj,
+                    'logicalId': iamGroupLogicalId + 'PolicyAttachment' + idx,
+                    'region': obj.region,
+                    'service': 'iam',
+                    'terraformType': 'aws_iam_group_policy_attachment',
+                    'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {}, 'tf': {
+                        'group': obj.data.GroupName,
+                        'policy_arn': attachedpolicy.PolicyArn
+                    } }
+                });
+            });
+        }
     } else if (obj.type == "iam.role") {
         reqParams.cfn['Path'] = obj.data.Path;
         reqParams.tf['path'] = obj.data.Path;
@@ -1066,9 +1125,11 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         SKIPPED: Policies
         */
 
+        var iamRoleLogicalId = getResourceName('iam', obj.id, 'AWS::IAM::Role');
+
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('iam', obj.id, 'AWS::IAM::Role'),
+            'logicalId': iamRoleLogicalId,
             'region': obj.region,
             'service': 'iam',
             'type': 'AWS::IAM::Role',
@@ -1081,7 +1142,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                     'RoleId': obj.data.RoleId
                 },
                 'Terraform': {
-                    'id': obj.data.Id,
+                    'id': obj.data.RoleName,
                     'name': obj.data.RoleName,
                     'arn': obj.data.Arn
                 },
@@ -1090,6 +1151,22 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 }
             }
         });
+
+        if (obj.data.AttachedPolicies && obj.data.AttachedPolicies.length) {
+            obj.data.AttachedPolicies.forEach((attachedpolicy, idx) => {
+                tracked_resources.push({
+                    'obj': obj,
+                    'logicalId': iamRoleLogicalId + 'PolicyAttachment' + idx,
+                    'region': obj.region,
+                    'service': 'iam',
+                    'terraformType': 'aws_iam_role_policy_attachment',
+                    'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'iam': {}, 'tf': {
+                        'role': obj.data.RoleName,
+                        'policy_arn': attachedpolicy.PolicyArn
+                    } }
+                });
+            });
+        }
     } else if (obj.type == "iam.managedpolicy") {
         reqParams.cfn['ManagedPolicyName'] = obj.data.PolicyName;
         reqParams.tf['name'] = obj.data.PolicyName;
@@ -1299,17 +1376,29 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['ServerCertificateName'] = obj.data.ServerCertificateMetadata.ServerCertificateName;
         reqParams.cfn['Tags'] = stripAWSTags(obj.data.Tags);
 
+        reqParams.tf['name'] = obj.data.ServerCertificateMetadata.ServerCertificateName;
+        reqParams.tf['path'] = obj.data.ServerCertificateMetadata.Path;
+        reqParams.tf['certificate_body'] = obj.data.CertificateBody;
+        reqParams.tf['certificate_chain'] = obj.data.CertificateChain;
+        // private_key is never returned by AWS; must be supplied manually.
+        reqParams.tf['private_key'] = obj.data.ServerCertificateMetadata.PrivateKey || "REPLACEME";
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('iam', obj.id, 'AWS::IAM::ServerCertificate'),
             'region': obj.region,
             'service': 'iam',
             'type': 'AWS::IAM::ServerCertificate',
+            'terraformType': 'aws_iam_server_certificate',
             'options': reqParams,
             'returnValues': {
                 'Ref': obj.data.ServerCertificateMetadata.ServerCertificateName,
                 'GetAtt': {
                     'Arn': obj.data.ServerCertificateMetadata.Arn
+                },
+                'Terraform': {
+                    'id': obj.data.ServerCertificateMetadata.ServerCertificateName,
+                    'arn': obj.data.ServerCertificateMetadata.Arn
                 }
             }
         });
@@ -1318,15 +1407,23 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['SamlMetadataDocument'] = obj.data.SamlMetadataDocument;
         reqParams.cfn['Tags'] = stripAWSTags(obj.data.Tags);
 
+        reqParams.tf['name'] = obj.data.Name;
+        reqParams.tf['saml_metadata_document'] = obj.data.SAMLMetadataDocument || obj.data.SamlMetadataDocument;
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('iam', obj.id, 'AWS::IAM::SAMLProvider'),
             'region': obj.region,
             'service': 'iam',
             'type': 'AWS::IAM::SAMLProvider',
+            'terraformType': 'aws_iam_saml_provider',
             'options': reqParams,
             'returnValues': {
-                'Ref': obj.data.Arn
+                'Ref': obj.data.Arn,
+                'Terraform': {
+                    'id': obj.data.Arn,
+                    'arn': obj.data.Arn
+                }
             }
         });
     } else if (obj.type == "iam.oidcprovider") {
@@ -1335,15 +1432,24 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['ThumbprintList'] = obj.data.ThumbprintList;
         reqParams.cfn['Tags'] = stripAWSTags(obj.data.Tags);
 
+        reqParams.tf['url'] = (obj.data.Url && obj.data.Url.indexOf("://") == -1) ? ("https://" + obj.data.Url) : obj.data.Url;
+        reqParams.tf['client_id_list'] = obj.data.ClientIDList || obj.data.ClientIdList;
+        reqParams.tf['thumbprint_list'] = obj.data.ThumbprintList;
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('iam', obj.id, 'AWS::IAM::OIDCProvider'),
             'region': obj.region,
             'service': 'iam',
             'type': 'AWS::IAM::OIDCProvider',
+            'terraformType': 'aws_iam_openid_connect_provider',
             'options': reqParams,
             'returnValues': {
-                'Ref': obj.data.Arn
+                'Ref': obj.data.Arn,
+                'Terraform': {
+                    'id': obj.data.Arn,
+                    'arn': obj.data.Arn
+                }
             }
         });
     } else {

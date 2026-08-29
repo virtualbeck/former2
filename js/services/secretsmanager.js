@@ -251,20 +251,37 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['RotationLambdaARN'] = obj.data.RotationLambdaARN;
         reqParams.cfn['RotationRules'] = obj.data.RotationRules;
 
+        reqParams.tf['secret_id'] = obj.data.ARN;
+        reqParams.tf['rotation_lambda_arn'] = obj.data.RotationLambdaARN;
+        if (obj.data.RotationRules) {
+            reqParams.tf['rotation_rules'] = {
+                'automatically_after_days': obj.data.RotationRules.AutomaticallyAfterDays,
+                'schedule_expression': obj.data.RotationRules.ScheduleExpression,
+                'duration': obj.data.RotationRules.Duration
+            };
+        }
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('secretsmanager', obj.id, 'AWS::SecretsManager::RotationSchedule'),
             'region': obj.region,
             'service': 'secretsmanager',
             'type': 'AWS::SecretsManager::RotationSchedule',
+            'terraformType': 'aws_secretsmanager_secret_rotation',
             'options': reqParams,
             'returnValues': {
-                'Ref': obj.data.ARN
+                'Ref': obj.data.ARN,
+                'Terraform': {
+                    'id': obj.data.ARN
+                }
             }
         });
     } else if (obj.type == "secretsmanager.resourcepolicy") {
         reqParams.cfn['SecretId'] = obj.data.ARN;
         reqParams.cfn['ResourcePolicy'] = obj.data.ResourcePolicy;
+
+        reqParams.tf['secret_arn'] = obj.data.ARN;
+        reqParams.tf['policy'] = obj.data.ResourcePolicy;
 
         tracked_resources.push({
             'obj': obj,
@@ -272,9 +289,13 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'secretsmanager',
             'type': 'AWS::SecretsManager::ResourcePolicy',
+            'terraformType': 'aws_secretsmanager_secret_policy',
             'options': reqParams,
             'returnValues': {
-                'Ref': obj.data.ARN
+                'Ref': obj.data.ARN,
+                'Terraform': {
+                    'id': obj.data.ARN
+                }
             }
         });
     } else {

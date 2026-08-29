@@ -1135,18 +1135,37 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['StatementId'] = obj.data.Sid;
         reqParams.cfn['EventBusName'] = obj.data.EventBusName;
 
+        // aws_cloudwatch_event_permission models the granular (per-statement)
+        // permission form; only emit it when we have a statement id.
+        if (obj.data.Sid) {
+            reqParams.tf['statement_id'] = obj.data.Sid;
+            reqParams.tf['action'] = obj.data.Action || "events:PutEvents";
+            reqParams.tf['principal'] = (obj.data.Principal && obj.data.Principal.AWS) ? obj.data.Principal.AWS : "*";
+            reqParams.tf['event_bus_name'] = obj.data.EventBusName;
+            if (obj.data.Condition && obj.data.Condition.StringEquals && obj.data.Condition.StringEquals['aws:PrincipalOrgID']) {
+                reqParams.tf['condition'] = {
+                    'key': 'aws:PrincipalOrgID',
+                    'type': 'StringEquals',
+                    'value': obj.data.Condition.StringEquals['aws:PrincipalOrgID']
+                };
+            }
+        }
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('eventbridge', obj.id, 'AWS::Events::EventBusPolicy'),
             'region': obj.region,
             'service': 'eventbridge',
             'type': 'AWS::Events::EventBusPolicy',
+            'terraformType': obj.data.Sid ? 'aws_cloudwatch_event_permission' : undefined,
             'options': reqParams
         });
     } else if (obj.type == "eventbridge.eventbus") {
         reqParams.cfn['Name'] = obj.data.Name;
+        reqParams.tf['name'] = obj.data.Name;
         if (obj.data.Name.startsWith('aws.partner/')) {
             reqParams.cfn['EventSourceName'] = obj.data.Name;
+            reqParams.tf['event_source_name'] = obj.data.Name;
         }
 
         tracked_resources.push({
@@ -1155,6 +1174,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'eventbridge',
             'type': 'AWS::Events::EventBus',
+            'terraformType': 'aws_cloudwatch_event_bus',
             'options': reqParams,
             'returnValues': {
                 'Ref': obj.data.Name,
@@ -1162,6 +1182,11 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                     'Arn': obj.data.Arn,
                     'Name': obj.data.Name,
                     'Policy': obj.data.Policy
+                },
+                'Terraform': {
+                    'id': obj.data.Name,
+                    'name': obj.data.Name,
+                    'arn': obj.data.Arn
                 }
             }
         });

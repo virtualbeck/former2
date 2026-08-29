@@ -534,6 +534,37 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['KafkaSettings'] = obj.data.KafkaSettings;
         reqParams.cfn['NeptuneSettings'] = obj.data.NeptuneSettings;
 
+        reqParams.tf['endpoint_id'] = obj.data.EndpointIdentifier;
+        reqParams.tf['endpoint_type'] = obj.data.EndpointType ? obj.data.EndpointType.toLowerCase() : undefined;
+        reqParams.tf['engine_name'] = obj.data.EngineName;
+        reqParams.tf['username'] = obj.data.Username;
+        reqParams.tf['password'] = "REPLACEME";
+        reqParams.tf['server_name'] = obj.data.ServerName;
+        reqParams.tf['port'] = obj.data.Port;
+        reqParams.tf['database_name'] = obj.data.DatabaseName;
+        reqParams.tf['extra_connection_attributes'] = obj.data.ExtraConnectionAttributes;
+        reqParams.tf['kms_key_arn'] = (obj.data.KmsKeyId && obj.data.KmsKeyId.indexOf("arn:") == 0) ? obj.data.KmsKeyId : undefined;
+        reqParams.tf['certificate_arn'] = obj.data.CertificateArn;
+        reqParams.tf['ssl_mode'] = obj.data.SslMode;
+        if (obj.data.S3Settings) {
+            reqParams.tf['s3_settings'] = {
+                'bucket_folder': obj.data.S3Settings.BucketFolder,
+                'bucket_name': obj.data.S3Settings.BucketName,
+                'compression_type': obj.data.S3Settings.CompressionType,
+                'csv_delimiter': obj.data.S3Settings.CsvDelimiter,
+                'csv_row_delimiter': obj.data.S3Settings.CsvRowDelimiter,
+                'external_table_definition': obj.data.S3Settings.ExternalTableDefinition,
+                'service_access_role_arn': obj.data.S3Settings.ServiceAccessRoleArn
+            };
+        }
+        if (obj.data.KinesisSettings) {
+            reqParams.tf['kinesis_settings'] = {
+                'stream_arn': obj.data.KinesisSettings.StreamArn,
+                'message_format': obj.data.KinesisSettings.MessageFormat,
+                'service_access_role_arn': obj.data.KinesisSettings.ServiceAccessRoleArn
+            };
+        }
+
         /*
         TODO:
         Tags:
@@ -546,7 +577,14 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'dms',
             'type': 'AWS::DMS::Endpoint',
-            'options': reqParams
+            'terraformType': 'aws_dms_endpoint',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.EndpointIdentifier,
+                    'endpoint_arn': obj.data.EndpointArn
+                }
+            }
         });
     } else if (obj.type == "dms.replicationinstance") {
         reqParams.cfn['ReplicationInstanceIdentifier'] = obj.data.ReplicationInstanceIdentifier;
@@ -569,9 +607,26 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['KmsKeyId'] = obj.data.KmsKeyId;
         reqParams.cfn['PubliclyAccessible'] = obj.data.PubliclyAccessible;
 
+        reqParams.tf['replication_instance_id'] = obj.data.ReplicationInstanceIdentifier;
+        reqParams.tf['replication_instance_class'] = obj.data.ReplicationInstanceClass;
+        reqParams.tf['allocated_storage'] = obj.data.AllocatedStorage;
+        reqParams.tf['availability_zone'] = obj.data.AvailabilityZone;
+        reqParams.tf['engine_version'] = obj.data.EngineVersion;
+        reqParams.tf['kms_key_arn'] = (obj.data.KmsKeyId && obj.data.KmsKeyId.indexOf("arn:") == 0) ? obj.data.KmsKeyId : undefined;
+        reqParams.tf['multi_az'] = obj.data.MultiAZ;
+        reqParams.tf['preferred_maintenance_window'] = obj.data.PreferredMaintenanceWindow;
+        reqParams.tf['publicly_accessible'] = obj.data.PubliclyAccessible;
+        reqParams.tf['auto_minor_version_upgrade'] = obj.data.AutoMinorVersionUpgrade;
+        if (obj.data.ReplicationSubnetGroup) {
+            reqParams.tf['replication_subnet_group_id'] = obj.data.ReplicationSubnetGroup.ReplicationSubnetGroupIdentifier;
+        }
+        if (obj.data.VpcSecurityGroups) {
+            reqParams.tf['vpc_security_group_ids'] = obj.data.VpcSecurityGroups.map(sg => sg.VpcSecurityGroupId);
+        }
+
         /*
         TODO:
-        Tags: 
+        Tags:
             - Resource Tag
         */
 
@@ -581,7 +636,14 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'dms',
             'type': 'AWS::DMS::ReplicationInstance',
-            'options': reqParams
+            'terraformType': 'aws_dms_replication_instance',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.ReplicationInstanceIdentifier,
+                    'replication_instance_arn': obj.data.ReplicationInstanceArn
+                }
+            }
         });
     } else if (obj.type == "dms.replicationtask") {
         reqParams.cfn['ReplicationTaskIdentifier'] = obj.data.ReplicationTaskIdentifier;
@@ -596,9 +658,19 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['CdcStopPosition'] = obj.data.CdcStopPosition;
         reqParams.cfn['TaskData'] = obj.data.TaskData;
 
+        reqParams.tf['replication_task_id'] = obj.data.ReplicationTaskIdentifier;
+        reqParams.tf['source_endpoint_arn'] = obj.data.SourceEndpointArn;
+        reqParams.tf['target_endpoint_arn'] = obj.data.TargetEndpointArn;
+        reqParams.tf['replication_instance_arn'] = obj.data.ReplicationInstanceArn;
+        reqParams.tf['migration_type'] = obj.data.MigrationType;
+        reqParams.tf['table_mappings'] = obj.data.TableMappings;
+        reqParams.tf['replication_task_settings'] = obj.data.ReplicationTaskSettings;
+        reqParams.tf['cdc_start_position'] = obj.data.CdcStartPosition;
+        reqParams.tf['cdc_start_time'] = obj.data.ReplicationTaskStartDate ? new Date(obj.data.ReplicationTaskStartDate).toISOString() : undefined;
+
         /*
         TODO:
-        Tags: 
+        Tags:
             - Resource Tag
         */
 
@@ -608,7 +680,13 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'dms',
             'type': 'AWS::DMS::ReplicationTask',
-            'options': reqParams
+            'terraformType': 'aws_dms_replication_task',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.ReplicationTaskIdentifier
+                }
+            }
         });
     } else if (obj.type == "dms.replicationsubnetgroup") {
         reqParams.cfn['ReplicationSubnetGroupIdentifier'] = obj.data.ReplicationSubnetGroupIdentifier;
@@ -620,10 +698,16 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             });
         }
 
+        reqParams.tf['replication_subnet_group_id'] = obj.data.ReplicationSubnetGroupIdentifier;
+        reqParams.tf['replication_subnet_group_description'] = obj.data.ReplicationSubnetGroupDescription;
+        if (obj.data.Subnets) {
+            reqParams.tf['subnet_ids'] = obj.data.Subnets.map(subnet => subnet.SubnetIdentifier);
+        }
+
         /*
         TODO:
         Tags:
-            - Resource Tag 
+            - Resource Tag
         */
 
         tracked_resources.push({
@@ -632,12 +716,22 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'dms',
             'type': 'AWS::DMS::ReplicationSubnetGroup',
-            'options': reqParams
+            'terraformType': 'aws_dms_replication_subnet_group',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.ReplicationSubnetGroupIdentifier
+                }
+            }
         });
     } else if (obj.type == "dms.certificate") {
         reqParams.cfn['CertificateIdentifier'] = obj.data.CertificateIdentifier;
         reqParams.cfn['CertificatePem'] = obj.data.CertificatePem;
         reqParams.cfn['CertificateWallet'] = obj.data.CertificateWallet;
+
+        reqParams.tf['certificate_id'] = obj.data.CertificateIdentifier;
+        reqParams.tf['certificate_pem'] = obj.data.CertificatePem;
+        reqParams.tf['certificate_wallet'] = obj.data.CertificateWallet;
 
         tracked_resources.push({
             'obj': obj,
@@ -645,7 +739,13 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'dms',
             'type': 'AWS::DMS::Certificate',
-            'options': reqParams
+            'terraformType': 'aws_dms_certificate',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.CertificateIdentifier
+                }
+            }
         });
     } else if (obj.type == "dms.eventsubscription") {
         reqParams.cfn['SnsTopicArn'] = obj.data.SnsTopicArn;
@@ -654,10 +754,16 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['EventCategories'] = obj.data.EventCategoriesList;
         reqParams.cfn['Enabled'] = obj.data.Enabled;
 
+        reqParams.tf['name'] = obj.data.CustSubscriptionId;
+        reqParams.tf['sns_topic_arn'] = obj.data.SnsTopicArn;
+        reqParams.tf['source_type'] = obj.data.SourceType;
+        reqParams.tf['source_ids'] = obj.data.SourceIdsList;
+        reqParams.tf['event_categories'] = obj.data.EventCategoriesList;
+        reqParams.tf['enabled'] = obj.data.Enabled;
+
         /*
         TODO:
-        SubscriptionName: String
-        Tags: 
+        Tags:
             - Resource Tag
         */
 
@@ -667,7 +773,13 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'region': obj.region,
             'service': 'dms',
             'type': 'AWS::DMS::EventSubscription',
-            'options': reqParams
+            'terraformType': 'aws_dms_event_subscription',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.CustSubscriptionId
+                }
+            }
         });
     } else {
         return false;
