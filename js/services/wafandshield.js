@@ -1812,6 +1812,38 @@ async function updateDatatableSecurityIdentityAndComplianceWAFAndShield() {
     unblockUI('#section-securityidentityandcompliance-wafandshield-firewallmanagernotifcationchannel-datatable');
 }
 
+// Converts an AWS WAFv2 API object (PascalCase, e.g. a rule Statement or
+// VisibilityConfig) into the snake_case shape used by the Terraform
+// aws_wafv2_* resources. Known list attributes that Terraform models as
+// repeated nested blocks are singularized so the HCL generator emits blocks.
+function wafv2TfKey(key) {
+    return key
+        .replace(/ARN/g, 'Arn')
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+        .toLowerCase();
+}
+
+function wafv2ToTf(node) {
+    if (Array.isArray(node)) {
+        return node.map(wafv2ToTf);
+    }
+    if (node && typeof node === "object") {
+        var out = {};
+        Object.keys(node).forEach(function(key) {
+            var tfkey = wafv2TfKey(key);
+            if (tfkey == "text_transformations") tfkey = "text_transformation";
+            else if (tfkey == "rules") tfkey = "rule";
+            else if (tfkey == "statements") tfkey = "statement";
+            else if (tfkey == "excluded_rules") tfkey = "excluded_rule";
+            else if (tfkey == "rule_action_overrides") tfkey = "rule_action_override";
+            out[tfkey] = wafv2ToTf(node[key]);
+        });
+        return out;
+    }
+    return node;
+}
+
 service_mapping_functions.push(function(reqParams, obj, tracked_resources){
     if (obj.type == "waf.webacl") {
         reqParams.cfn['Name'] = obj.data.Name;
@@ -2356,9 +2388,15 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['Addresses'] = obj.data.Addresses;
         reqParams.cfn['Scope'] = obj.data.Scope;
 
+        reqParams.tf['name'] = obj.data.Name;
+        reqParams.tf['description'] = obj.data.Description;
+        reqParams.tf['scope'] = obj.data.Scope;
+        reqParams.tf['ip_address_version'] = obj.data.IPAddressVersion;
+        reqParams.tf['addresses'] = obj.data.Addresses;
+
         /*
         TODO:
-        Tags: 
+        Tags:
             TagList
         */
 
@@ -2367,6 +2405,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'logicalId': getResourceName('waf', obj.id, 'AWS::WAFv2::IPSet'),
             'region': obj.region,
             'service': 'waf',
+            'terraformType': 'aws_wafv2_ip_set',
             'type': 'AWS::WAFv2::IPSet',
             'options': reqParams,
             'returnValues':  {
@@ -2374,6 +2413,10 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 'GetAtt': {
                     'Id': obj.data.Id,
                     'Arn': obj.data.ARN
+                },
+                'Terraform': {
+                    'id': obj.data.Id + "/" + obj.data.Name + "/" + obj.data.Scope,
+                    'arn': obj.data.ARN
                 },
                 'Import': {
                     'Name': obj.data.Name,
@@ -2388,9 +2431,18 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['RegularExpressionList'] = obj.data.RegularExpressionList;
         reqParams.cfn['Scope'] = obj.data.Scope;
 
+        reqParams.tf['name'] = obj.data.Name;
+        reqParams.tf['description'] = obj.data.Description;
+        reqParams.tf['scope'] = obj.data.Scope;
+        if (obj.data.RegularExpressionList) {
+            reqParams.tf['regular_expression'] = obj.data.RegularExpressionList.map(regex => ({
+                'regex_string': regex.RegexString
+            }));
+        }
+
         /*
         TODO:
-        Tags: 
+        Tags:
             TagList
         */
 
@@ -2399,12 +2451,17 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'logicalId': getResourceName('waf', obj.id, 'AWS::WAFv2::RegexPatternSet'),
             'region': obj.region,
             'service': 'waf',
+            'terraformType': 'aws_wafv2_regex_pattern_set',
             'type': 'AWS::WAFv2::RegexPatternSet',
             'options': reqParams,
             'returnValues': {
                 'GetAtt': {
                     'Arn': obj.data.ARN,
                     'Id': obj.data.Id
+                },
+                'Terraform': {
+                    'id': obj.data.Id + "/" + obj.data.Name + "/" + obj.data.Scope,
+                    'arn': obj.data.ARN
                 },
                 'Import': {
                     'Name': obj.data.Name,
@@ -2466,9 +2523,32 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         }
         reqParams.cfn['CustomResponseBodies'] = obj.data.CustomResponseBodies;
 
+        reqParams.tf['name'] = obj.data.Name;
+        reqParams.tf['description'] = obj.data.Description;
+        reqParams.tf['scope'] = obj.data.Scope;
+        if (obj.data.DefaultAction) {
+            reqParams.tf['default_action'] = wafv2ToTf(obj.data.DefaultAction);
+        }
+        if (obj.data.VisibilityConfig) {
+            reqParams.tf['visibility_config'] = wafv2ToTf(obj.data.VisibilityConfig);
+        }
+        if (obj.data.TokenDomains) {
+            reqParams.tf['token_domains'] = obj.data.TokenDomains;
+        }
+        if (obj.data.Rules) {
+            reqParams.tf['rule'] = obj.data.Rules.map(wafv2ToTf);
+        }
+        if (obj.data.CustomResponseBodies) {
+            reqParams.tf['custom_response_body'] = Object.keys(obj.data.CustomResponseBodies).map(key => ({
+                'key': key,
+                'content': obj.data.CustomResponseBodies[key].Content,
+                'content_type': obj.data.CustomResponseBodies[key].ContentType
+            }));
+        }
+
         /*
         TODO:
-        Tags: 
+        Tags:
             TagList
         */
 
@@ -2477,12 +2557,17 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'logicalId': getResourceName('waf', obj.id, 'AWS::WAFv2::WebACL'),
             'region': obj.region,
             'service': 'waf',
+            'terraformType': 'aws_wafv2_web_acl',
             'type': 'AWS::WAFv2::WebACL',
             'options': reqParams,
             'returnValues': {
                 'GetAtt': {
                     'Arn': obj.data.ARN,
                     'Id': obj.data.Id
+                },
+                'Terraform': {
+                    'id': obj.data.Id + "/" + obj.data.Name + "/" + obj.data.Scope,
+                    'arn': obj.data.ARN
                 },
                 'Import': {
                     'Name': obj.data.Name,
@@ -2533,11 +2618,27 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             });
         }
 
+        reqParams.tf['name'] = obj.data.Name;
+        reqParams.tf['description'] = obj.data.Description;
+        reqParams.tf['scope'] = obj.data.Scope;
+        reqParams.tf['capacity'] = obj.data.Capacity;
+        if (obj.data.VisibilityConfig) {
+            reqParams.tf['visibility_config'] = wafv2ToTf(obj.data.VisibilityConfig);
+        }
+        if (obj.data.Rules) {
+            reqParams.tf['rule'] = obj.data.Rules.map(wafv2ToTf);
+        }
+        if (obj.data.CustomResponseBodies) {
+            reqParams.tf['custom_response_body'] = Object.keys(obj.data.CustomResponseBodies).map(key => ({
+                'key': key,
+                'content': obj.data.CustomResponseBodies[key].Content,
+                'content_type': obj.data.CustomResponseBodies[key].ContentType
+            }));
+        }
+
         /*
         TODO:
-        Rules: 
-            Rules
-        Tags: 
+        Tags:
             TagList
         */
 
@@ -2546,12 +2647,17 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'logicalId': getResourceName('waf', obj.id, 'AWS::WAFv2::RuleGroup'),
             'region': obj.region,
             'service': 'waf',
+            'terraformType': 'aws_wafv2_rule_group',
             'type': 'AWS::WAFv2::RuleGroup',
             'options': reqParams,
             'returnValues': {
                 'GetAtt': {
                     'Arn': obj.data.ARN,
                     'Id': obj.data.Id
+                },
+                'Terraform': {
+                    'id': obj.data.Id + "/" + obj.data.Name + "/" + obj.data.Scope,
+                    'arn': obj.data.ARN
                 },
                 'Import': {
                     'Name': obj.data.Name,
@@ -2564,14 +2670,21 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['ResourceArn'] = obj.data.ResourceArn;
         reqParams.cfn['WebACLArn'] = obj.data.WebACLArn;
 
+        reqParams.tf['resource_arn'] = obj.data.ResourceArn;
+        reqParams.tf['web_acl_arn'] = obj.data.WebACLArn;
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('waf', obj.id, 'AWS::WAFv2::WebACLAssociation'),
             'region': obj.region,
             'service': 'waf',
+            'terraformType': 'aws_wafv2_web_acl_association',
             'type': 'AWS::WAFv2::WebACLAssociation',
             'options': reqParams,
             'returnValues': {
+                'Terraform': {
+                    'id': obj.data.WebACLArn + "," + obj.data.ResourceArn
+                },
                 'Import': {
                     'ResourceArn': obj.data.ResourceArn,
                     'WebACLArn': obj.data.WebACLArn
@@ -2639,13 +2752,28 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['RedactedFields'] = obj.data.RedactedFields;
         reqParams.cfn['LoggingFilter'] = obj.data.LoggingFilter;
 
+        reqParams.tf['resource_arn'] = obj.data.ResourceArn;
+        reqParams.tf['log_destination_configs'] = obj.data.LogDestinationConfigs;
+        if (obj.data.RedactedFields) {
+            reqParams.tf['redacted_field'] = obj.data.RedactedFields.map(wafv2ToTf);
+        }
+        if (obj.data.LoggingFilter) {
+            reqParams.tf['logging_filter'] = wafv2ToTf(obj.data.LoggingFilter);
+        }
+
         tracked_resources.push({
             'obj': obj,
             'logicalId': getResourceName('waf', obj.id, 'AWS::WAFv2::LoggingConfiguration'),
             'region': obj.region,
             'service': 'waf',
+            'terraformType': 'aws_wafv2_web_acl_logging_configuration',
             'type': 'AWS::WAFv2::LoggingConfiguration',
-            'options': reqParams
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.ResourceArn
+                }
+            }
         });
     } else {
         return false;

@@ -162,6 +162,45 @@ sections.push({
                 ]
             ]
         },
+        'Account Public Access Block': {
+            'terraformonly': true,
+            'columns': [
+                [
+                    {
+                        field: 'state',
+                        checkbox: true,
+                        rowspan: 2,
+                        align: 'center',
+                        valign: 'middle'
+                    },
+                    {
+                        title: 'Account ID',
+                        field: 'id',
+                        rowspan: 2,
+                        align: 'center',
+                        valign: 'middle',
+                        sortable: true,
+                        formatter: primaryFieldFormatter,
+                        footerFormatter: textFormatter
+                    },
+                    {
+                        title: 'Properties',
+                        colspan: 4,
+                        align: 'center'
+                    }
+                ],
+                [
+                    {
+                        field: 'blockpublicacls',
+                        title: 'Block Public ACLs',
+                        sortable: true,
+                        editable: true,
+                        footerFormatter: textFormatter,
+                        align: 'center'
+                    }
+                ]
+            ]
+        },
         'Outpost Buckets': {
             'columns': [
                 [
@@ -430,6 +469,7 @@ async function updateDatatableStorageS3() {
     blockUI('#section-storage-s3-bucketpolicies-datatable');
     blockUI('#section-storage-s3-accesspoints-datatable');
     blockUI('#section-storage-s3-storagelenses-datatable');
+    blockUI('#section-storage-s3-accountpublicaccessblock-datatable');
     blockUI('#section-storage-s3-outpostbuckets-datatable');
     blockUI('#section-storage-s3-outpostbucketpolicies-datatable');
     blockUI('#section-storage-s3-outpostaccesspoints-datatable');
@@ -575,8 +615,27 @@ async function updateDatatableStorageS3() {
         $('#section-storage-s3-outpostendpoints-datatable').deferredBootstrapTable('removeAll');
         $('#section-storage-s3-multiregionaccesspoints-datatable').deferredBootstrapTable('removeAll');
         $('#section-storage-s3-multiregionaccesspointpolicies-datatable').deferredBootstrapTable('removeAll');
+        $('#section-storage-s3-accountpublicaccessblock-datatable').deferredBootstrapTable('removeAll');
 
         var accountId = data.Account;
+
+        await sdkcall("S3Control", "getPublicAccessBlock", {
+            AccountId: accountId
+        }, false).then((data) => {
+            if (data.PublicAccessBlockConfiguration) {
+                $('#section-storage-s3-accountpublicaccessblock-datatable').deferredBootstrapTable('append', [{
+                    f2id: accountId,
+                    f2type: 's3.accountpublicaccessblock',
+                    f2data: {
+                        'AccountId': accountId,
+                        'PublicAccessBlockConfiguration': data.PublicAccessBlockConfiguration
+                    },
+                    f2region: region,
+                    id: accountId,
+                    blockpublicacls: data.PublicAccessBlockConfiguration.BlockPublicAcls
+                }]);
+            }
+        }).catch(() => { });
 
         await sdkcall("S3Control", "listAccessPoints", {
             AccountId: accountId
@@ -817,6 +876,7 @@ async function updateDatatableStorageS3() {
 
     unblockUI('#section-storage-s3-accesspoints-datatable');
     unblockUI('#section-storage-s3-storagelenses-datatable');
+    unblockUI('#section-storage-s3-accountpublicaccessblock-datatable');
     unblockUI('#section-storage-s3-outpostbuckets-datatable');
     unblockUI('#section-storage-s3-outpostbucketpolicies-datatable');
     unblockUI('#section-storage-s3-outpostaccesspoints-datatable');
@@ -829,6 +889,7 @@ async function updateDatatableStorageS3() {
 
 service_mapping_functions.push(function(reqParams, obj, tracked_resources){
     if (obj.type == "s3.bucket") {
+        var s3LogicalId = getResourceName('s3', obj.id, 'AWS::S3::Bucket');
         reqParams.cfn['BucketName'] = obj.data.Name;
         reqParams.tf['bucket'] = obj.data.Name;
         reqParams.cfn['Tags'] = stripAWSTags(obj.data.Tags);
@@ -1172,9 +1233,21 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             reqParams.cfn['Tags'] = obj.data.Tags;
         }
 
+        // The Terraform AWS provider (v4+) no longer accepts the bucket
+        // configuration inline on aws_s3_bucket; only bucket-level identity and
+        // tags remain here. Everything else is emitted as a dedicated
+        // aws_s3_bucket_* resource below (Terraform only - CloudFormation keeps
+        // it inline on AWS::S3::Bucket).
+        var s3tftags = stripAWSTags(obj.data.Tags);
+        if (Array.isArray(s3tftags)) {
+            var s3tagmap = {};
+            s3tftags.forEach(tag => { s3tagmap[tag.Key] = tag.Value; });
+            reqParams.tf['tags'] = s3tagmap;
+        }
+
         tracked_resources.push({
             'obj': obj,
-            'logicalId': getResourceName('s3', obj.id, 'AWS::S3::Bucket'),
+            'logicalId': s3LogicalId,
             'region': obj.region,
             'service': 's3',
             'type': 'AWS::S3::Bucket',
@@ -1191,6 +1264,377 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 }
             }
         });
+
+        var s3TagsToMap = function(tags) {
+            if (!tags || !tags.length) { return undefined; }
+            var m = {};
+            tags.forEach(function(t) { m[t.Key] = t.Value; });
+            return m;
+        };
+        var s3PushSub = function(suffix, terraformType, tf) {
+            tf['bucket'] = obj.data.Name;
+            tracked_resources.push({
+                'obj': obj,
+                'logicalId': s3LogicalId + suffix,
+                'region': obj.region,
+                'service': 's3',
+                'terraformType': terraformType,
+                'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'tf': tf, 'iam': {} },
+                'returnValues': {
+                    'Terraform': {
+                        'id': obj.data.Name
+                    }
+                }
+            });
+        };
+
+        if (obj.data.Versioning && obj.data.Versioning.Status) {
+            s3PushSub('Versioning', 'aws_s3_bucket_versioning', {
+                'versioning_configuration': {
+                    'status': obj.data.Versioning.Status,
+                    'mfa_delete': obj.data.Versioning.MFADelete
+                }
+            });
+        }
+
+        if (obj.data.AccelerateConfiguration && obj.data.AccelerateConfiguration.Status) {
+            s3PushSub('Accelerate', 'aws_s3_bucket_accelerate_configuration', {
+                'status': obj.data.AccelerateConfiguration.Status
+            });
+        }
+
+        if (obj.data.Encryption && obj.data.Encryption.ServerSideEncryptionConfiguration && obj.data.Encryption.ServerSideEncryptionConfiguration.Rules && obj.data.Encryption.ServerSideEncryptionConfiguration.Rules.length) {
+            s3PushSub('Encryption', 'aws_s3_bucket_server_side_encryption_configuration', {
+                'rule': obj.data.Encryption.ServerSideEncryptionConfiguration.Rules.map(rule => ({
+                    'bucket_key_enabled': rule.BucketKeyEnabled,
+                    'apply_server_side_encryption_by_default': rule.ApplyServerSideEncryptionByDefault ? {
+                        'sse_algorithm': rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm,
+                        'kms_master_key_id': rule.ApplyServerSideEncryptionByDefault.KMSMasterKeyID
+                    } : undefined
+                }))
+            });
+        }
+
+        if (obj.data.Cors && obj.data.Cors.CORSRules && obj.data.Cors.CORSRules.length) {
+            s3PushSub('Cors', 'aws_s3_bucket_cors_configuration', {
+                'cors_rule': obj.data.Cors.CORSRules.map(corsrule => ({
+                    'id': corsrule.ID,
+                    'allowed_headers': corsrule.AllowedHeaders,
+                    'allowed_methods': corsrule.AllowedMethods,
+                    'allowed_origins': corsrule.AllowedOrigins,
+                    'expose_headers': corsrule.ExposeHeaders,
+                    'max_age_seconds': corsrule.MaxAgeSeconds
+                }))
+            });
+        }
+
+        if (obj.data.Logging && obj.data.Logging.LoggingEnabled) {
+            s3PushSub('Logging', 'aws_s3_bucket_logging', {
+                'target_bucket': obj.data.Logging.LoggingEnabled.TargetBucket,
+                'target_prefix': obj.data.Logging.LoggingEnabled.TargetPrefix
+            });
+        }
+
+        if (obj.data.Website && (obj.data.Website.IndexDocument || obj.data.Website.RedirectAllRequestsTo)) {
+            var websitetf = {};
+            if (obj.data.Website.IndexDocument) {
+                websitetf['index_document'] = { 'suffix': obj.data.Website.IndexDocument.Suffix };
+            }
+            if (obj.data.Website.ErrorDocument) {
+                websitetf['error_document'] = { 'key': obj.data.Website.ErrorDocument.Key };
+            }
+            if (obj.data.Website.RedirectAllRequestsTo) {
+                websitetf['redirect_all_requests_to'] = {
+                    'host_name': obj.data.Website.RedirectAllRequestsTo.HostName,
+                    'protocol': obj.data.Website.RedirectAllRequestsTo.Protocol
+                };
+            }
+            if (obj.data.Website.RoutingRules && obj.data.Website.RoutingRules.length) {
+                websitetf['routing_rule'] = obj.data.Website.RoutingRules.map(rr => ({
+                    'condition': rr.Condition ? {
+                        'key_prefix_equals': rr.Condition.KeyPrefixEquals,
+                        'http_error_code_returned_equals': rr.Condition.HttpErrorCodeReturnedEquals
+                    } : undefined,
+                    'redirect': rr.Redirect ? {
+                        'host_name': rr.Redirect.HostName,
+                        'http_redirect_code': rr.Redirect.HttpRedirectCode,
+                        'protocol': rr.Redirect.Protocol,
+                        'replace_key_prefix_with': rr.Redirect.ReplaceKeyPrefixWith,
+                        'replace_key_with': rr.Redirect.ReplaceKeyWith
+                    } : undefined
+                }));
+            }
+            s3PushSub('Website', 'aws_s3_bucket_website_configuration', websitetf);
+        }
+
+        if (obj.data.OwnershipControls && obj.data.OwnershipControls.Rules && obj.data.OwnershipControls.Rules.length) {
+            s3PushSub('OwnershipControls', 'aws_s3_bucket_ownership_controls', {
+                'rule': {
+                    'object_ownership': obj.data.OwnershipControls.Rules[0].ObjectOwnership
+                }
+            });
+        }
+
+        if (obj.data.PublicAccessBlockConfiguration) {
+            s3PushSub('PublicAccessBlock', 'aws_s3_bucket_public_access_block', {
+                'block_public_acls': obj.data.PublicAccessBlockConfiguration.BlockPublicAcls,
+                'block_public_policy': obj.data.PublicAccessBlockConfiguration.BlockPublicPolicy,
+                'ignore_public_acls': obj.data.PublicAccessBlockConfiguration.IgnorePublicAcls,
+                'restrict_public_buckets': obj.data.PublicAccessBlockConfiguration.RestrictPublicBuckets
+            });
+        }
+
+        if (obj.data.ObjectLockConfiguration && obj.data.ObjectLockConfiguration.ObjectLockEnabled) {
+            var olc = obj.data.ObjectLockConfiguration;
+            s3PushSub('ObjectLock', 'aws_s3_bucket_object_lock_configuration', {
+                'rule': (olc.Rule && olc.Rule.DefaultRetention) ? {
+                    'default_retention': {
+                        'mode': olc.Rule.DefaultRetention.Mode,
+                        'days': olc.Rule.DefaultRetention.Days,
+                        'years': olc.Rule.DefaultRetention.Years
+                    }
+                } : undefined
+            });
+        }
+
+        if (obj.data.Lifecycle && obj.data.Lifecycle.Rules && obj.data.Lifecycle.Rules.length) {
+            s3PushSub('Lifecycle', 'aws_s3_bucket_lifecycle_configuration', {
+                'rule': obj.data.Lifecycle.Rules.map(rule => {
+                    var tfrule = {
+                        'id': rule.ID,
+                        'status': rule.Status
+                    };
+                    // Always emit a filter block (required by the provider for
+                    // v4+; an empty filter {} applies the rule to all objects).
+                    var f = (rule.Filter && rule.Filter.And) ? rule.Filter.And : (rule.Filter || {});
+                    tfrule['filter'] = {
+                        'prefix': f.Prefix,
+                        'object_size_greater_than': f.ObjectSizeGreaterThan,
+                        'object_size_less_than': f.ObjectSizeLessThan,
+                        'tag': (f.Tag && !(rule.Filter && rule.Filter.And)) ? { 'key': f.Tag.Key, 'value': f.Tag.Value } : undefined,
+                        'tags': s3TagsToMap(f.Tags)
+                    };
+                    if (rule.Expiration) {
+                        tfrule['expiration'] = {
+                            'date': rule.Expiration.Date ? rule.Expiration.Date.toISOString() : undefined,
+                            'days': rule.Expiration.Days,
+                            'expired_object_delete_marker': rule.Expiration.ExpiredObjectDeleteMarker
+                        };
+                    }
+                    if (rule.Transitions) {
+                        tfrule['transition'] = rule.Transitions.map(t => ({
+                            'date': t.Date ? t.Date.toISOString() : undefined,
+                            'days': t.Days,
+                            'storage_class': t.StorageClass
+                        }));
+                    }
+                    if (rule.NoncurrentVersionExpiration) {
+                        tfrule['noncurrent_version_expiration'] = {
+                            'noncurrent_days': rule.NoncurrentVersionExpiration.NoncurrentDays,
+                            'newer_noncurrent_versions': rule.NoncurrentVersionExpiration.NewerNoncurrentVersions
+                        };
+                    }
+                    if (rule.NoncurrentVersionTransitions) {
+                        tfrule['noncurrent_version_transition'] = rule.NoncurrentVersionTransitions.map(t => ({
+                            'noncurrent_days': t.NoncurrentDays,
+                            'newer_noncurrent_versions': t.NewerNoncurrentVersions,
+                            'storage_class': t.StorageClass
+                        }));
+                    }
+                    if (rule.AbortIncompleteMultipartUpload) {
+                        tfrule['abort_incomplete_multipart_upload'] = {
+                            'days_after_initiation': rule.AbortIncompleteMultipartUpload.DaysAfterInitiation
+                        };
+                    }
+                    return tfrule;
+                })
+            });
+        }
+
+        if (obj.data.Replication && obj.data.Replication.ReplicationConfiguration && obj.data.Replication.ReplicationConfiguration.Rules && obj.data.Replication.ReplicationConfiguration.Rules.length) {
+            var repl = obj.data.Replication.ReplicationConfiguration;
+            s3PushSub('Replication', 'aws_s3_bucket_replication_configuration', {
+                'role': repl.Role,
+                'rule': (repl.Rules || []).map(rule => ({
+                    'id': rule.ID,
+                    'priority': rule.Priority,
+                    'prefix': rule.Prefix,
+                    'status': rule.Status,
+                    'delete_marker_replication': rule.DeleteMarkerReplication ? {
+                        'status': rule.DeleteMarkerReplication.Status
+                    } : undefined,
+                    'filter': rule.Filter ? {
+                        'prefix': rule.Filter.Prefix,
+                        'tag': rule.Filter.Tag ? { 'key': rule.Filter.Tag.Key, 'value': rule.Filter.Tag.Value } : undefined
+                    } : undefined,
+                    'source_selection_criteria': rule.SourceSelectionCriteria ? {
+                        'sse_kms_encrypted_objects': rule.SourceSelectionCriteria.SseKmsEncryptedObjects ? {
+                            'status': rule.SourceSelectionCriteria.SseKmsEncryptedObjects.Status
+                        } : undefined
+                    } : undefined,
+                    'destination': rule.Destination ? {
+                        'bucket': rule.Destination.Bucket,
+                        'storage_class': rule.Destination.StorageClass,
+                        'account': rule.Destination.Account,
+                        'replica_kms_key_id': (rule.Destination.EncryptionConfiguration || {}).ReplicaKmsKeyID,
+                        'access_control_translation': rule.Destination.AccessControlTranslation ? {
+                            'owner': rule.Destination.AccessControlTranslation.Owner
+                        } : undefined,
+                        'metrics': rule.Destination.Metrics ? {
+                            'status': rule.Destination.Metrics.Status,
+                            'event_threshold': rule.Destination.Metrics.EventThreshold ? {
+                                'minutes': rule.Destination.Metrics.EventThreshold.Minutes
+                            } : undefined
+                        } : undefined,
+                        'replication_time': rule.Destination.ReplicationTime ? {
+                            'status': rule.Destination.ReplicationTime.Status,
+                            'time': rule.Destination.ReplicationTime.Time ? {
+                                'minutes': rule.Destination.ReplicationTime.Time.Minutes
+                            } : undefined
+                        } : undefined
+                    } : undefined
+                }))
+            });
+        }
+
+        if (obj.data.NotificationConfiguration && (obj.data.NotificationConfiguration.TopicConfigurations || obj.data.NotificationConfiguration.QueueConfigurations || obj.data.NotificationConfiguration.LambdaFunctionConfigurations)) {
+            var s3NotifFilter = function(configuration) {
+                var out = {};
+                if (configuration.Filter && configuration.Filter.Key && configuration.Filter.Key.FilterRules) {
+                    configuration.Filter.Key.FilterRules.forEach(function(fr) {
+                        if (fr.Name && fr.Name.toLowerCase() == "prefix") { out.filter_prefix = fr.Value; }
+                        if (fr.Name && fr.Name.toLowerCase() == "suffix") { out.filter_suffix = fr.Value; }
+                    });
+                }
+                return out;
+            };
+            var notiftf = {};
+            if (obj.data.NotificationConfiguration.TopicConfigurations && obj.data.NotificationConfiguration.TopicConfigurations.length) {
+                notiftf['topic'] = obj.data.NotificationConfiguration.TopicConfigurations.map(c => Object.assign({
+                    'id': c.Id,
+                    'topic_arn': c.TopicArn,
+                    'events': c.Events
+                }, s3NotifFilter(c)));
+            }
+            if (obj.data.NotificationConfiguration.QueueConfigurations && obj.data.NotificationConfiguration.QueueConfigurations.length) {
+                notiftf['queue'] = obj.data.NotificationConfiguration.QueueConfigurations.map(c => Object.assign({
+                    'id': c.Id,
+                    'queue_arn': c.QueueArn,
+                    'events': c.Events
+                }, s3NotifFilter(c)));
+            }
+            if (obj.data.NotificationConfiguration.LambdaFunctionConfigurations && obj.data.NotificationConfiguration.LambdaFunctionConfigurations.length) {
+                notiftf['lambda_function'] = obj.data.NotificationConfiguration.LambdaFunctionConfigurations.map(c => Object.assign({
+                    'id': c.Id,
+                    'lambda_function_arn': c.LambdaFunctionArn,
+                    'events': c.Events
+                }, s3NotifFilter(c)));
+            }
+            s3PushSub('Notification', 'aws_s3_bucket_notification', notiftf);
+        }
+
+        if (obj.data.AnalyticsConfigurations && obj.data.AnalyticsConfigurations.AnalyticsConfigurationList) {
+            obj.data.AnalyticsConfigurations.AnalyticsConfigurationList.forEach(function(config, idx) {
+                var sca = null;
+                if (config.StorageClassAnalysis && config.StorageClassAnalysis.DataExport) {
+                    var dest = config.StorageClassAnalysis.DataExport.Destination.S3BucketDestination;
+                    sca = {
+                        'data_export': {
+                            'output_schema_version': config.StorageClassAnalysis.DataExport.OutputSchemaVersion,
+                            'destination': {
+                                's3_bucket_destination': {
+                                    'bucket_arn': dest.Bucket,
+                                    'bucket_account_id': dest.BucketAccountId,
+                                    'format': dest.Format,
+                                    'prefix': dest.Prefix
+                                }
+                            }
+                        }
+                    };
+                }
+                var filt = undefined;
+                if (config.Filter) {
+                    var ftags = config.Filter.Tag ? [config.Filter.Tag] : [];
+                    if (config.Filter.And && config.Filter.And.Tags) { ftags = ftags.concat(config.Filter.And.Tags); }
+                    filt = {
+                        'prefix': config.Filter.Prefix || (config.Filter.And ? config.Filter.And.Prefix : undefined),
+                        'tags': s3TagsToMap(ftags)
+                    };
+                }
+                s3PushSub('Analytics' + idx, 'aws_s3_bucket_analytics_configuration', {
+                    'name': config.Id,
+                    'filter': filt,
+                    'storage_class_analysis': sca
+                });
+            });
+        }
+
+        if (obj.data.InventoryConfigurations && obj.data.InventoryConfigurations.InventoryConfigurationList) {
+            obj.data.InventoryConfigurations.InventoryConfigurationList.forEach(function(config, idx) {
+                var dest = config.Destination.S3BucketDestination;
+                s3PushSub('Inventory' + idx, 'aws_s3_bucket_inventory', {
+                    'name': config.Id,
+                    'enabled': config.IsEnabled,
+                    'included_object_versions': config.IncludedObjectVersions,
+                    'optional_fields': config.OptionalFields,
+                    'schedule': { 'frequency': config.Schedule.Frequency },
+                    'filter': (config.Filter && config.Filter.Prefix) ? { 'prefix': config.Filter.Prefix } : undefined,
+                    'destination': {
+                        'bucket': {
+                            'bucket_arn': dest.Bucket,
+                            'account_id': dest.AccountId,
+                            'format': dest.Format,
+                            'prefix': dest.Prefix,
+                            'encryption': dest.Encryption ? {
+                                'sse_s3': dest.Encryption.SSES3 ? {} : undefined,
+                                'sse_kms': dest.Encryption.SSEKMS ? { 'key_id': dest.Encryption.SSEKMS.KeyId } : undefined
+                            } : undefined
+                        }
+                    }
+                });
+            });
+        }
+
+        if (obj.data.MetricsConfigurations && obj.data.MetricsConfigurations.MetricsConfigurationList) {
+            obj.data.MetricsConfigurations.MetricsConfigurationList.forEach(function(config, idx) {
+                var filt = undefined;
+                if (config.Filter) {
+                    var ftags = config.Filter.Tag ? [config.Filter.Tag] : [];
+                    if (config.Filter.And && config.Filter.And.Tags) { ftags = ftags.concat(config.Filter.And.Tags); }
+                    filt = {
+                        'prefix': config.Filter.Prefix || (config.Filter.And ? config.Filter.And.Prefix : undefined),
+                        'tags': s3TagsToMap(ftags)
+                    };
+                }
+                s3PushSub('Metric' + idx, 'aws_s3_bucket_metric', {
+                    'name': config.Id,
+                    'filter': filt
+                });
+            });
+        }
+
+        if (obj.data.IntelligentTieringConfiguration) {
+            obj.data.IntelligentTieringConfiguration.forEach(function(itconfig, idx) {
+                var filt = undefined;
+                if (itconfig.Filter) {
+                    var ftags = itconfig.Filter.Tag ? [itconfig.Filter.Tag] : [];
+                    if (itconfig.Filter.And && itconfig.Filter.And.Tags) { ftags = ftags.concat(itconfig.Filter.And.Tags); }
+                    filt = {
+                        'prefix': itconfig.Filter.Prefix || (itconfig.Filter.And ? itconfig.Filter.And.Prefix : undefined),
+                        'tags': s3TagsToMap(ftags)
+                    };
+                }
+                s3PushSub('IntelligentTiering' + idx, 'aws_s3_bucket_intelligent_tiering_configuration', {
+                    'name': itconfig.Id,
+                    'status': itconfig.Status,
+                    'filter': filt,
+                    'tiering': (itconfig.Tierings || []).map(t => ({
+                        'access_tier': t.AccessTier,
+                        'days': t.Days
+                    }))
+                });
+            });
+        }
     } else if (obj.type == "s3.bucketpolicy") {
         reqParams.cfn['Bucket'] = obj.data.Bucket;
         reqParams.tf['bucket'] = obj.data.Bucket;
@@ -1205,6 +1649,26 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             'type': 'AWS::S3::BucketPolicy',
             'terraformType': 'aws_s3_bucket_policy',
             'options': reqParams
+        });
+    } else if (obj.type == "s3.accountpublicaccessblock") {
+        var pabc = obj.data.PublicAccessBlockConfiguration || {};
+        reqParams.tf['block_public_acls'] = pabc.BlockPublicAcls;
+        reqParams.tf['block_public_policy'] = pabc.BlockPublicPolicy;
+        reqParams.tf['ignore_public_acls'] = pabc.IgnorePublicAcls;
+        reqParams.tf['restrict_public_buckets'] = pabc.RestrictPublicBuckets;
+
+        tracked_resources.push({
+            'obj': obj,
+            'logicalId': getResourceName('s3', obj.id, 'AWS::S3::AccountPublicAccessBlock'),
+            'region': obj.region,
+            'service': 's3',
+            'terraformType': 'aws_s3_account_public_access_block',
+            'options': reqParams,
+            'returnValues': {
+                'Terraform': {
+                    'id': obj.data.AccountId
+                }
+            }
         });
     } else if (obj.type == "s3.accesspoint") {
         reqParams.cfn['Name'] = obj.data.Name;

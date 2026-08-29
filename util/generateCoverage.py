@@ -78,7 +78,12 @@ for servicefilename in os.listdir("js/services"):
         for line in lines:
             if 'not real resource type' not in line:
                 cfn_occurances += re.compile(r'(AWS\:\:[a-zA-Z0-9]+\:\:[a-zA-Z0-9]+)').findall(line)
-        tf_occurances += re.compile(r'terraformType\'\:\ \'(aws(?:\_[a-zA-Z0-9]+)+)\'').findall(text)
+            # Match any aws_* string literal on a line that assigns terraformType
+            # (plain literals, ternaries and `var terraformType = "..."` forms) or
+            # that passes the type to a *PushSub-style helper emitting a
+            # Terraform-only sub-resource.
+            if re.search(r'terraformType|PushSub\(|pushTf\(', line):
+                tf_occurances += re.compile(r'[\'"](aws(?:\_[a-zA-Z0-9]+)+)[\'"]').findall(line)
 
 for cfntype, _ in cfn_spec.items():
     cfn_types.append(cfntype)
@@ -201,10 +206,14 @@ with open("RESOURCE_COVERAGE.md", "w") as f:
         f.write("| *%s* | %s |\n" % (cfntype, coverage))
 
     f.write("\n## Terraform Coverage\n\n")
+    # Only count mapped types that are actual documented resources; the mapper
+    # also emits some newer split resources (e.g. aws_s3_bucket_versioning) that
+    # are not yet in tf_resources.txt and must not inflate the ratio.
+    tf_covered = (set(tf_occurances) & set(tf_resources)) | set(tf_exceptions)
     f.write("**%s/%s (%s%%)** Resources Covered\n" % (
-        len(set(tf_occurances)) + len(tf_exceptions),
+        len(tf_covered),
         len(tf_resources),
-        int(math.floor((len(set(tf_occurances)) + len(tf_exceptions)) * 100 / len(tf_resources)))
+        int(math.floor(len(tf_covered) * 100 / len(tf_resources)))
     ))
     
     f.write("\n| Type | Coverage |\n")

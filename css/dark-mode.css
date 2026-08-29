@@ -1,0 +1,124 @@
+/* Dark Mode Styles */
+body.dark-mode {
+  background-color: #1a1a1a;
+  color: #e0e0e0;
+}
+
+body.dark-mode .page-content,
+body.dark-mode .site-header,
+body.dark-mode .box-typical,
+body.dark-mode .former2-section {
+  background-color: #2d2d2d;
+  color: #e0e0e0;
+}
+
+body.dark-mode .site-header {
+  border-bottom-color: #444;
+}
+
+body.dark-mode .page-content {
+  background-color: #1a1a1a;
+}
+
+body.dark-mode input,
+body.dark-mode textarea,
+body.dark-mode select,
+body.dark-mode .form-control {
+  background-color: #3a3a3a;
+  color: #e0e0e0;
+  border-color: #555;
+}
+
+body.dark-mode .btn-default,
+body.dark-mode .btn-default-outline {
+  background-color: #3a3a3a;
+  color: #e0e0e0;
+  border-color: #555;
+}
+
+body.dark-mode .btn-default:hover,
+body.dark-mode .btn-default-outline:hover {
+  background-color: #4a4a4a;
+}
+
+body.dark-mode .btn-primary {
+  background-color: #0066cc;
+  border-color: #0066cc;
+}
+
+body.dark-mode table {
+  color: #e0e0e0;
+}
+
+body.dark-mode .table-striped tbody tr:nth-of-type(odd) {
+  background-color: #2a2a2a;
+}
+
+body.dark-mode .table-hover tbody tr:hover {
+  background-color: #3a3a3a;
+}
+
+body.dark-mode a {
+  color: #66b3ff;
+}
+
+body.dark-mode a:hover {
+  color: #99ccff;
+}
+
+body.dark-mode .modal-content {
+  background-color: #2d2d2d;
+  color: #e0e0e0;
+}
+
+body.dark-mode .dropdown-menu {
+  background-color: #2d2d2d;
+  border-color: #555;
+}
+
+body.dark-mode .dropdown-menu > li > a {
+  color: #e0e0e0;
+}
+
+body.dark-mode .dropdown-menu > li > a:hover {
+  background-color: #3a3a3a;
+}
+
+body.dark-mode code,
+body.dark-mode pre {
+  background-color: #1a1a1a;
+  color: #e0e0e0;
+  border-color: #555;
+}
+
+/* Dark mode toggle button */
+#dark-mode-toggle {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background-color: #333;
+  color: #fff;
+  border: 2px solid #555;
+  cursor: pointer;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+}
+
+#dark-mode-toggle:hover {
+  background-color: #444;
+  transform: scale(1.1);
+}
+
+body.dark-mode #dark-mode-toggle {
+  background-color: #ffd700;
+  color: #333;
+  border-color: #ffd700;
+}

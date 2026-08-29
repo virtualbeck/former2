@@ -1,8 +1,62 @@
 services:
+  # main tailscale service
+  ts-former2:
+    image: ${TAILSCALE_IMAGE}
+    container_name: ts-${SERVICE_NAME}
+    hostname: ${SERVICE_NAME} # ${SERVICE_NAME}.tail5080.ts.net endpoint
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_EXTRA_ARGS=--advertise-tags=tag:container
+      - TS_SERVE_CONFIG=/config/${SERVICE_NAME}.json
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - ${PWD}/ts-${SERVICE_NAME}/state:/var/lib/tailscale
+      - ${PWD}/ts-${SERVICE_NAME}/config:/config
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: unless-stopped
+
+  # sidecar
   former2:
     image: nginx:stable-alpine
-    ports:
-      - "127.0.0.1:80:80"
+    container_name: ${SERVICE_NAME}
     volumes:
-    - .:/usr/share/nginx/html
+      - .:/usr/share/nginx/html
+      # Reverse-proxies the server-side helper at /ssr so the app works without
+      # the browser extension. Remove this line to disable.
+      - ./util/nginx-former2.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    network_mode: service:ts-${SERVICE_NAME} # <-- this is where the magic happens
+    depends_on:
+      - ts-${SERVICE_NAME}
+      - former2-ssr
 
+  # server-side helper: runs the AWS SDK so the browser doesn't have to.
+  # Removes the need for the Former2 Helper browser extension (S3, IAM, ...).
+  # Set the app's Settings -> "Server-side Helper" field to: /ssr
+  former2-ssr:
+    image: node:18-alpine
+    container_name: ${SERVICE_NAME}-ssr
+    working_dir: /former2
+    volumes:
+      - .:/former2
+    command: sh -c "npm install --no-save --no-audit --no-fund express aws-sdk && node util/ssr.js"
+    restart: unless-stopped
+    network_mode: service:ts-${SERVICE_NAME}
+    depends_on:
+      - ts-${SERVICE_NAME}
+    # ports:
+    #   - "127.0.0.1:80:80"
+    healthcheck:
+      test: curl --fail http://localhost:8080/ || exit 1
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  ts-former2:
+    driver: local

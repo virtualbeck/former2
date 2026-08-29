@@ -99,6 +99,7 @@
         <link rel="stylesheet" href="lib/codemirror/theme/xq-light.css">
         <link rel="stylesheet" href="lib/codemirror/theme/yeti.css">
         <link rel="stylesheet" href="lib/codemirror/theme/zenburn.css">
+        <link rel="stylesheet" href="css/dark-mode.css">
 
         <script src="lib/codemirror/codemirror.js"></script>
         <script src="lib/codemirror/mode/python/python.js"></script>
@@ -1408,6 +1409,12 @@
                                         <label for="uselocalstackendpoint">Use LocalStack Endpoint</label>
                                     </div>
                                 </div>
+                                <br />
+                                <div class="form-group">
+                                    <h5>Server-side Helper&nbsp;<span data-tippy-content="Experimental"><i class="fa fa-warning" style="color: #f29824;"></i></span></h5>
+                                    <p>Route AWS SDK traffic through the server-side helper (<code>util/ssr.js</code>) instead of the browser extension. This removes the need for the Former2 Helper extension entirely, including for S3, IAM and other APIs that lack CORS. Leave blank to use the extension. Example: <code>/ssr</code> (same-origin reverse proxy) or <code>http://localhost:3001/</code>.</p>
+                                    <input type="text" class="form-control" id="ssrendpoint" placeholder="/ssr">
+                                </div>
                             </div>
                             <div class="col-md-1"></div>
                             <div class="col-md-5">
@@ -1779,5 +1786,34 @@
         <script src="js/services/iottwinmaker.js"></script>
         
         <script src="js/app.js"></script>
-    </body>
+      <button id="dark-mode-toggle" title="Toggle Dark Mode">
+        <span id="dark-mode-icon">🌙</span>
+      </button>
+
+    <script>
+    (function() {
+      const toggleButton = document.getElementById('dark-mode-toggle');
+      const icon = document.getElementById('dark-mode-icon');
+
+      // Check for saved preference
+      if (localStorage.getItem('former2-dark-mode') === 'enabled') {
+        document.body.classList.add('dark-mode');
+        icon.textContent = '☀️';
+      }
+
+      // Toggle dark mode
+      toggleButton.addEventListener('click', function() {
+        document.body.classList.toggle('dark-mode');
+
+        if (document.body.classList.contains('dark-mode')) {
+          localStorage.setItem('former2-dark-mode', 'enabled');
+          icon.textContent = '☀️';
+        } else {
+          localStorage.setItem('former2-dark-mode', 'disabled');
+          icon.textContent = '🌙';
+        }
+      });
+    })();
+    </script>
+  </body>
 </html>

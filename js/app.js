@@ -1,5 +1,11 @@
 var CHROME_HELPER_EXTENSION_ID = "fhejmeojlbhfhjndnkkleooeejklmigi"; // Chrome
 var EDGE_HELPER_EXTENSION_ID = "okkjnfohglnomdbpimkcdkiojbeiedof"; // Edge
+// Server-side helper (util/ssr.js) endpoint. When set, all AWS SDK traffic is
+// proxied through it instead of the browser extension, which removes the need
+// for the extension entirely (including for S3, IAM and other CORS-less APIs).
+// Overridable at runtime via the "Helper endpoint" setting (localStorage key
+// "ssrendpoint"), e.g. "/ssr" when reverse-proxied on the same origin.
+var SSR_ENDPOINT = "";
 var extension_available = false;
 var region = 'us-east-1';
 var output_objects = [];
@@ -1591,6 +1597,18 @@ $(document).ready(function(){
         window.localStorage.setItem('uselocalstackendpoint', $(this).is(':checked').toString());
     });
 
+    if (window.localStorage.getItem('ssrendpoint')) {
+        $('#ssrendpoint').val(window.localStorage.getItem('ssrendpoint'));
+    }
+    $('#ssrendpoint').on('input', function() {
+        var val = $(this).val().trim();
+        if (val) {
+            window.localStorage.setItem('ssrendpoint', val);
+        } else {
+            window.localStorage.removeItem('ssrendpoint');
+        }
+    });
+
     if (window.localStorage.getItem('includedefaultresources') == "true") {
         $('#includedefaultresources').prop('checked', true);
         include_default_resources = true;
@@ -1627,7 +1645,41 @@ document.addEventListener('f2response', msg => {
     }
 });
 
+function getSsrEndpoint() {
+    try {
+        return (window && window.localStorage.getItem('ssrendpoint')) || SSR_ENDPOINT || "";
+    } catch (e) {
+        return SSR_ENDPOINT || "";
+    }
+}
+
 function extensionSendMessage(data, callback) {
+    var ssrEndpoint = getSsrEndpoint();
+    if (ssrEndpoint) {
+        var timedout = false;
+        var timer = setTimeout(function() {
+            timedout = true;
+            callback(null); // ping resolves as "unavailable", other actions surface as no-response
+        }, data.action == "ping" ? 2500 : 300000);
+
+        fetch(ssrEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        }).then(function(resp) {
+            return resp.json();
+        }).then(function(parsed) {
+            if (timedout) { return; }
+            clearTimeout(timer);
+            callback(parsed);
+        }).catch(function() {
+            if (timedout) { return; }
+            clearTimeout(timer);
+            callback(null);
+        });
+        return;
+    }
+
     if (navigator.userAgent.search("Firefox") > -1) { // Firefox
         var uid = Math.random().toString(36);
         var event = new CustomEvent('f2request', {
