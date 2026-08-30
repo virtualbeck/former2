@@ -41,6 +41,8 @@ services:
     image: node:18-alpine
     container_name: ${SERVICE_NAME}-ssr
     working_dir: /former2
+    environment:
+      - AWS_SDK_JS_SUPPRESS_MAINTENANCE_MODE_MESSAGE=1
     volumes:
       - .:/former2
     command: sh -c "npm install --no-save --no-audit --no-fund express aws-sdk && node util/ssr.js"
@@ -51,7 +53,7 @@ services:
     # ports:
     #   - "127.0.0.1:80:80"
     healthcheck:
-      test: curl --fail http://localhost:8080/ || exit 1
+      test: wget -q -O /dev/null http://localhost:3001/ || exit 1
       interval: 40s
       timeout: 30s
       retries: 3
