@@ -705,6 +705,7 @@ $(document).ready(function(){
         $('#header-button-import-cfn').attr('style', 'margin-left: 16px; display: none;');
         $('#header-button-download-diagram').attr('style', 'display: none;');
         $('#header-button-copy-tf').attr('style', 'display: none;');
+        $('#header-button-download-tfproject').attr('style', 'margin-left: 16px; display: none;');
         $('#header-button-copy-troposphere').attr('style', 'display: none;');
         $('#header-button-copy-cdk').attr('style', 'display: none;');
         $('#header-button-copy-cdkv2').attr('style', 'display: none;');
@@ -764,6 +765,7 @@ $(document).ready(function(){
                 }, 1);
             } else if (location.hash == "#section-outputs-tf") {
                 $('#header-button-copy-tf').attr('style', '');
+                $('#header-button-download-tfproject').attr('style', 'margin-left: 16px;');
                 $('#header-button-clear-outputs').attr('style', 'margin-left: 16px;');
 
                 setTimeout(function(){
@@ -1401,9 +1403,41 @@ $(document).ready(function(){
             action: 'export',
             format: 'png'
         });
-    
-        var iframe = document.getElementById('diagramframe');  
-        iframe.contentWindow.postMessage(message, '*');    
+
+        var iframe = document.getElementById('diagramframe');
+        iframe.contentWindow.postMessage(message, '*');
+    });
+
+    $('#header-button-download-tfproject').click(function(){
+        if (typeof tracked_resources === "undefined" || !tracked_resources || !tracked_resources.some(function(r){ return r.terraformType; })) {
+            $.notify({
+                icon: 'font-icon font-icon-warning',
+                title: '<strong>Nothing to export</strong>',
+                message: 'Generate some Terraform output first.'
+            },{
+                type: 'warning'
+            });
+            return;
+        }
+
+        var files = generateTerraformProject(tracked_resources);
+        var zip = new JSZip();
+        var folder = zip.folder("former2-terraform");
+        Object.keys(files).forEach(function(path){
+            folder.file(path, files[path]);
+        });
+
+        zip.generateAsync({ type: "blob" }).then(function(blob){
+            var url = URL.createObjectURL(blob);
+            var element = document.createElement('a');
+            element.setAttribute('href', url);
+            element.setAttribute('download', "former2-terraform.zip");
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+            setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+        });
     });
 
     window.addEventListener('message', (message) => {
