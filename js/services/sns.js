@@ -161,6 +161,9 @@ async function updateDatatableApplicationIntegrationSNS() {
                     TopicArn: topic.TopicArn
                 }, true).then((data) => {
                     data.Subscriptions.forEach(subscription => {
+                        if (!subscription.SubscriptionArn || subscription.SubscriptionArn.indexOf("arn:") !== 0) {
+                            return; // PendingConfirmation / Deleted - not a real subscription
+                        }
                         sdkcall("SNS", "getSubscriptionAttributes", {
                             SubscriptionArn: subscription.SubscriptionArn
                         }, true).then((data) => {
