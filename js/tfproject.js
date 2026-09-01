@@ -302,10 +302,13 @@ function generateTerraformProject(tracked_resources, options) {
     // Per-group accumulators.
     var groups = {}; // group -> { blocks:[], vars:{name->{type,default}}, outputs:{name->expr}, imports:{srcGroup->1} }
     function groupState(name) {
-        if (!groups[name]) {
-            groups[name] = { blocks: [], vars: {}, outputs: {}, imports: {}, data: {} };
-        }
-        return groups[name];
+        var g = groups[name] || (groups[name] = {});
+        if (!g.blocks) { g.blocks = []; }
+        if (!g.vars) { g.vars = {}; }
+        if (!g.outputs) { g.outputs = {}; }
+        if (!g.imports) { g.imports = {}; }
+        if (!g.data) { g.data = {}; }
+        return g;
     }
 
     var crossRefs = []; // for MANUAL-WIRING.md
@@ -400,7 +403,7 @@ function tfProjectRewriteRefs(block, r, group, groupOf, groups, crossRefs) {
         var varName = srcGroup + '_' + outName;
         groups[group].vars[varName] = { type: 'string', default: null, src: srcGroup, output: outName };
         groups[group].imports[srcGroup] = 1;
-        groups[srcGroup] = groups[srcGroup] || { blocks: [], vars: {}, outputs: {}, imports: {} };
+        groups[srcGroup] = groups[srcGroup] || { blocks: [], vars: {}, outputs: {}, imports: {}, data: {} };
         groups[srcGroup].outputs[outName] = type + '.' + lid + '.' + attr;
         crossRefs.push({ from: group, to: srcGroup, variable: varName, output: outName, expr: type + '.' + lid + '.' + attr });
         return '${var.' + varName + '}';

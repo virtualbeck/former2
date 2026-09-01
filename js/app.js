@@ -127,6 +127,18 @@ $(document).ready(function(){
         return ids;
     }
 
+    function showFlowBusy(msg) {
+        var label = document.getElementById('f2-busy-label');
+        if (label) { label.innerHTML = msg || 'Working&hellip;'; }
+        var overlay = document.getElementById('f2-busy-overlay');
+        if (overlay) { overlay.hidden = false; }
+    }
+
+    function hideFlowBusy() {
+        var overlay = document.getElementById('f2-busy-overlay');
+        if (overlay) { overlay.hidden = true; }
+    }
+
     // Guided flow toolbar: enable each step once its prerequisite is met and
     // highlight the left-most step that is currently actionable.
     function updateFlowState() {
@@ -932,9 +944,16 @@ $(document).ready(function(){
     /* ========================================================================== */
 
     $("#generate-outputs").on('click', () => {
-        regenerateOutputs().then(() => {
-            window.location.href = "#section-outputs-" + defaultoutput;
-        });
+        if ($('#generate-outputs').prop('disabled')) { return; }
+        showFlowBusy('Generating output&hellip;');
+        // let the overlay paint before the synchronous mapping work blocks the thread
+        setTimeout(function(){
+            regenerateOutputs().then(() => {
+                window.location.hash = "#section-outputs-" + defaultoutput;
+                window.scrollTo(0, 0);
+                hideFlowBusy();
+            });
+        }, 60);
     });
 
     function regenerateOutputs() {
@@ -1468,43 +1487,49 @@ $(document).ready(function(){
             return;
         }
 
-        var files;
-        try {
-            files = generateTerraformProject(tracked_resources);
-        } catch (err) {
-            f2trace(err);
-            $.notify({
-                icon: 'font-icon font-icon-danger',
-                title: '<strong>Could not build the project</strong>',
-                message: (err && err.message) ? err.message : String(err)
-            },{ type: 'danger' });
-            return;
-        }
+        showFlowBusy('Building Terraform project&hellip;');
+        setTimeout(function(){
+            var files;
+            try {
+                files = generateTerraformProject(tracked_resources);
+            } catch (err) {
+                hideFlowBusy();
+                f2trace(err);
+                $.notify({
+                    icon: 'font-icon font-icon-danger',
+                    title: '<strong>Could not build the project</strong>',
+                    message: (err && err.message) ? err.message : String(err)
+                },{ type: 'danger' });
+                return;
+            }
 
-        var zip = new JSZip();
-        var folder = zip.folder("former2-terraform");
-        Object.keys(files).forEach(function(path){
-            folder.file(path, files[path]);
-        });
+            var zip = new JSZip();
+            var folder = zip.folder("former2-terraform");
+            Object.keys(files).forEach(function(path){
+                folder.file(path, files[path]);
+            });
 
-        zip.generateAsync({ type: "blob" }).then(function(blob){
-            var url = URL.createObjectURL(blob);
-            var element = document.createElement('a');
-            element.setAttribute('href', url);
-            element.setAttribute('download', "former2-terraform.zip");
-            element.style.display = 'none';
-            document.body.appendChild(element);
-            element.click();
-            document.body.removeChild(element);
-            setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
-        }).catch(function(err){
-            f2trace(err);
-            $.notify({
-                icon: 'font-icon font-icon-danger',
-                title: '<strong>Could not package the zip</strong>',
-                message: (err && err.message) ? err.message : String(err)
-            },{ type: 'danger' });
-        });
+            zip.generateAsync({ type: "blob" }).then(function(blob){
+                hideFlowBusy();
+                var url = URL.createObjectURL(blob);
+                var element = document.createElement('a');
+                element.setAttribute('href', url);
+                element.setAttribute('download', "former2-terraform.zip");
+                element.style.display = 'none';
+                document.body.appendChild(element);
+                element.click();
+                document.body.removeChild(element);
+                setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+            }).catch(function(err){
+                hideFlowBusy();
+                f2trace(err);
+                $.notify({
+                    icon: 'font-icon font-icon-danger',
+                    title: '<strong>Could not package the zip</strong>',
+                    message: (err && err.message) ? err.message : String(err)
+                },{ type: 'danger' });
+            });
+        }, 60);
     }
 
     $('#header-button-download-tfproject').click(downloadTerraformProject);
