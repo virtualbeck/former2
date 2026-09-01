@@ -22,10 +22,17 @@
  * module inputs, so there is no terraform_remote_state plumbing.
  *
  * Resource HCL is rendered with the existing outputMapTf() from mappings.js.
- * A light post-processing pass hoists a curated set of top-level scalar
- * attributes into each module's variables.tf (discovered value as the default;
- * that is the single source of truth) and rewrites cross-module references
- * into module inputs/outputs.
+ * Post-processing passes then:
+ *   - tfProjectResolveValues(): rewrite literal strings that match another
+ *     scanned resource's computed attribute (an ALB DNS name, a VPC id, an
+ *     ARN, ...) into ${<type>.<lid>.<attr>} interpolations, and swap the
+ *     resource's own region / account id inside ARNs and endpoints for
+ *     data.aws_region / data.aws_caller_identity lookups;
+ *   - tfProjectHoistScalars(): hoist a curated set of top-level scalar
+ *     attributes into each module's variables.tf (discovered value as the
+ *     default; that is the single source of truth);
+ *   - tfProjectRewriteRefs(): turn any of the above that crosses a module
+ *     boundary into a module input wired from the source module's output.
  * ========================================================================== */
 
 var TF_PROJECT_DEFAULT_ENV = 'dev';
@@ -73,6 +80,185 @@ var TF_PROJECT_HOIST_ATTRS = {
 
 var TF_REF_RE = /\$\{(aws_[a-z0-9_]+)\.([A-Za-z0-9_-]+)\.([a-z0-9_]+)\}/g;
 
+// terraformType -> { <AWS field / dotted path suffix>: <terraform computed attr> }.
+// Only fields listed here are indexed for value-based back-references, so a
+// literal that happens to match some unrelated resource's data is never
+// rewritten. Extend as coverage grows.
+var TF_COMPUTED_ATTRS = {
+    aws_vpc:                     { VpcId: 'id', Arn: 'arn' },
+    aws_subnet:                  { SubnetId: 'id', Arn: 'arn' },
+    aws_security_group:          { GroupId: 'id', Arn: 'arn' },
+    aws_instance:                { InstanceId: 'id', Arn: 'arn' },
+    aws_lb:                      { DNSName: 'dns_name', LoadBalancerArn: 'arn', CanonicalHostedZoneId: 'zone_id' },
+    aws_elb:                     { DNSName: 'dns_name' },
+    aws_lb_target_group:         { TargetGroupArn: 'arn' },
+    aws_db_instance:             { 'Endpoint.Address': 'address', DbiResourceId: 'resource_id', DBInstanceArn: 'arn' },
+    aws_rds_cluster:             { Endpoint: 'endpoint', ReaderEndpoint: 'reader_endpoint', DbClusterResourceId: 'cluster_resource_id', DBClusterArn: 'arn' },
+    aws_cloudfront_distribution: { DomainName: 'domain_name', Id: 'id', ARN: 'arn' },
+    aws_sns_topic:               { TopicArn: 'arn' },
+    aws_sqs_queue:               { QueueUrl: 'url', QueueArn: 'arn' },
+    aws_kms_key:                 { KeyId: 'key_id', Arn: 'arn' },
+    aws_iam_role:                { Arn: 'arn' },
+    aws_iam_user:                { Arn: 'arn' },
+    aws_iam_policy:              { Arn: 'arn' },
+    aws_iam_instance_profile:    { Arn: 'arn' },
+    aws_ecs_cluster:             { ClusterArn: 'arn' },
+    aws_ecr_repository:          { RepositoryUri: 'repository_url', RepositoryArn: 'arn' },
+    aws_lambda_function:         { FunctionArn: 'arn' },
+    aws_dynamodb_table:          { TableArn: 'arn', LatestStreamArn: 'stream_arn' },
+    aws_efs_file_system:         { FileSystemId: 'id', Arn: 'arn' },
+    aws_api_gateway_rest_api:    { Id: 'id' },
+    aws_kinesis_stream:          { StreamARN: 'arn' },
+    aws_acm_certificate:         { CertificateArn: 'arn' },
+    aws_route53_zone:            { Id: 'zone_id' },
+    aws_cloudwatch_log_group:    { Arn: 'arn' },
+    aws_secretsmanager_secret:   { ARN: 'arn' }
+};
+
+// A literal must look like an opaque identifier / endpoint / ARN before it is
+// eligible for back-reference rewriting - names, CIDRs, regions on their own
+// and other guessable strings are deliberately excluded.
+var TF_VALUE_INTERESTING_RE = /^(arn:aws|https:\/\/)|^[a-z][a-z0-9-]*-[0-9a-f]{8,17}$|^Z[A-Z0-9]{6,}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|\.amazonaws\.com(:|$|\/)|\.elb\.|\.rds\.|\.cache\.|\.es\.amazonaws/;
+
+function tfProjectReEsc(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Depth-first walk of an object, invoking cb(dottedPath, leafKey, value) for
+// every string/number leaf.
+function tfProjectWalkLeaves(obj, cb, path) {
+    path = path || '';
+    if (obj === null || obj === undefined) { return; }
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            tfProjectWalkLeaves(obj[i], cb, path);
+        }
+        return;
+    }
+    if (typeof obj === 'object') {
+        for (var k in obj) {
+            if (!Object.prototype.hasOwnProperty.call(obj, k)) { continue; }
+            var v = obj[k];
+            var childPath = path ? path + '.' + k : k;
+            if (v !== null && typeof v === 'object') {
+                tfProjectWalkLeaves(v, cb, childPath);
+            } else if (typeof v === 'string' || typeof v === 'number') {
+                cb(childPath, k, v);
+            }
+        }
+    }
+}
+
+function tfProjectBuildValueIndex(tracked_resources) {
+    var index = {};      // value -> {tfType, lid, attr} | null (null == ambiguous, skip)
+    var accounts = {};    // accountId -> count
+
+    for (var i = 0; i < tracked_resources.length; i++) {
+        var r = tracked_resources[i];
+        if (!r || !r.terraformType || !r.obj || !r.obj.data) { continue; }
+        var table = TF_COMPUTED_ATTRS[r.terraformType] || {};
+        var lid = r.logicalId;
+        var tfType = r.terraformType;
+
+        tfProjectWalkLeaves(r.obj.data, function (dottedPath, leafKey, value) {
+            if (typeof value === 'string') {
+                var acct = value.match(/^arn:aws[a-z-]*:[^:]*:[^:]*:(\d{12}):/);
+                if (acct) { accounts[acct[1]] = (accounts[acct[1]] || 0) + 1; }
+            }
+
+            var attr = table[leafKey];
+            if (!attr) {
+                // allow dotted-path suffix match (e.g. "Endpoint.Address")
+                for (var key in table) {
+                    if (key.indexOf('.') !== -1 && dottedPath.slice(-key.length) === key) {
+                        attr = table[key];
+                        break;
+                    }
+                }
+            }
+            if (!attr) { return; }
+
+            var val = ('' + value).trim();
+            if (val.length < 8 || !TF_VALUE_INTERESTING_RE.test(val)) { return; }
+
+            if (!(val in index)) {
+                index[val] = { tfType: tfType, lid: lid, attr: attr };
+            } else if (index[val] && (index[val].lid !== lid || index[val].attr !== attr)) {
+                index[val] = null; // same literal, two meanings - ambiguous
+            }
+        });
+    }
+
+    var account = null, best = 0;
+    for (var a in accounts) {
+        if (accounts[a] > best) { best = accounts[a]; account = a; }
+    }
+
+    // Longest values first so a short id nested inside a longer literal does not
+    // shadow the longer match.
+    var order = Object.keys(index).filter(function (v) { return index[v]; })
+        .sort(function (x, y) { return y.length - x.length; });
+
+    return { map: index, order: order, account: account };
+}
+
+// Rewrite literal substrings in an emitted resource block:
+//   - another scanned resource's computed value  -> ${<type>.<lid>.<attr>}
+//   - the resource's region inside an ARN/endpoint -> ${data.aws_region.current.id}
+//   - the account id inside an ARN                 -> ${data.aws_caller_identity.current.account_id}
+// Records which data sources the module ends up needing in gs.data.
+function tfProjectResolveValues(block, r, valueIndex, gs) {
+    var selfLid = r.logicalId;
+    var region = r.region;
+    var account = valueIndex.account;
+
+    return block.replace(/"((?:[^"\\\n]|\\.)*)"/g, function (whole, inner) {
+        var text = inner;
+
+        // 1. computed-attribute back-references
+        for (var i = 0; i < valueIndex.order.length; i++) {
+            var val = valueIndex.order[i];
+            var ent = valueIndex.map[val];
+            if (!ent || ent.lid === selfLid) { continue; }
+            if (text.indexOf(val) === -1) { continue; }
+            var re = new RegExp('(^|[^A-Za-z0-9_-])' + tfProjectReEsc(val) + '(?![A-Za-z0-9-])', 'g');
+            text = text.replace(re, function (m, pre) {
+                return pre + '${' + ent.tfType + '.' + ent.lid + '.' + ent.attr + '}';
+            });
+        }
+
+        var looksAws = /^arn:aws|amazonaws\.com|\.elb\.|\.rds\.|\.cache\./.test(text);
+
+        // 2. region token inside an ARN / endpoint
+        if (looksAws && region) {
+            var rre = new RegExp('(^|[.:\\-])' + tfProjectReEsc(region) + '(?=[.:\\-]|$)', 'g');
+            if (rre.test(text)) {
+                text = text.replace(new RegExp('(^|[.:\\-])' + tfProjectReEsc(region) + '(?=[.:\\-]|$)', 'g'),
+                    function (m, pre) { return pre + '${data.aws_region.current.id}'; });
+                gs.data.region = 1;
+            }
+        }
+
+        // 3. account id inside an ARN
+        if (account && /^arn:aws/.test(text) && text.indexOf(':' + account + ':') !== -1) {
+            text = text.split(':' + account + ':').join(':${data.aws_caller_identity.current.account_id}:');
+            gs.data.caller_identity = 1;
+        }
+
+        return text === inner ? whole : '"' + text + '"';
+    });
+}
+
+function tfProjectDataFile(used) {
+    used = used || {};
+    function line(on, body) { return (on ? '' : '# ') + body + '\n'; }
+    return '# Common lookups. Entries used by this module are enabled; uncomment others as needed.\n' +
+        '#\n' +
+        line(used.caller_identity, 'data "aws_caller_identity" "current" {}') +
+        line(used.region, 'data "aws_region" "current" {}') +
+        line(used.partition, 'data "aws_partition" "current" {}');
+}
+
 function tfProjectGroupFor(terraformType, service) {
     for (var i = 0; i < TF_PROJECT_GROUPS.length; i++) {
         if (TF_PROJECT_GROUPS[i][0].test(terraformType)) {
@@ -117,12 +303,16 @@ function generateTerraformProject(tracked_resources, options) {
     var groups = {}; // group -> { blocks:[], vars:{name->{type,default}}, outputs:{name->expr}, imports:{srcGroup->1} }
     function groupState(name) {
         if (!groups[name]) {
-            groups[name] = { blocks: [], vars: {}, outputs: {}, imports: {} };
+            groups[name] = { blocks: [], vars: {}, outputs: {}, imports: {}, data: {} };
         }
         return groups[name];
     }
 
     var crossRefs = []; // for MANUAL-WIRING.md
+
+    // value -> {tfType, lid, attr} index for computed-attribute back-references,
+    // plus the discovered AWS account id.
+    var valueIndex = tfProjectBuildValueIndex(tracked_resources);
 
     for (var j = 0; j < tracked_resources.length; j++) {
         var r = tracked_resources[j];
@@ -134,6 +324,7 @@ function generateTerraformProject(tracked_resources, options) {
         var block = outputMapTf(j, r.service, r.terraformType, r.options.tf, r.region, r.was_blocked, r.logicalId, tracked_resources);
         block = block.replace(/^\n+/, '').replace(/\s+$/, '') + '\n';
 
+        block = tfProjectResolveValues(block, r, valueIndex, gs);
         block = tfProjectHoistScalars(block, r, gs);
         block = tfProjectRewriteRefs(block, r, group, groupOf, groups, crossRefs);
 
@@ -148,12 +339,7 @@ function generateTerraformProject(tracked_resources, options) {
 
         files['modules/' + name + '/main.tf'] = gs.blocks.join('\n');
 
-        files['modules/' + name + '/data.tf'] =
-            '# Common lookups. Uncomment the ones you use.\n' +
-            '#\n' +
-            '# data "aws_caller_identity" "current" {}\n' +
-            '# data "aws_region" "current" {}\n' +
-            '# data "aws_partition" "current" {}\n';
+        files['modules/' + name + '/data.tf'] = tfProjectDataFile(gs.data);
 
         files['modules/' + name + '/variables.tf'] = tfProjectRenderVariables(gs.vars);
 
@@ -337,6 +523,9 @@ function tfProjectReadme(env, region, regionList, groupNames, count, crossRefCou
         '  module\'s `variables.tf` with the discovered value as the default.\n' +
         '  That is the single source of truth - edit them there.\n' +
         '- Import existing resources into state rather than recreating them.\n' +
+        '- Literals matching another resource\'s computed attribute (DNS names,\n' +
+        '  ARNs, VPC/subnet/SG ids) were rewritten to references; region and\n' +
+        '  account id inside ARNs became `data` lookups. Spot-check them.\n' +
         '- former2 cannot emit repeated nested blocks (some security group\n' +
         '  rules, WAF statements, S3 lifecycle transitions); those render as\n' +
         '  list literals and need a manual pass.\n' +
