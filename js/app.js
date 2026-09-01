@@ -1216,7 +1216,7 @@ $(document).ready(function(){
         var completeddatatablecalls = 0;
         var datatablefuncs = [];
 
-        $('.scan-account').attr('disabled', 'disabled');
+        $('.scan-account').attr('disabled', 'disabled').addClass('f2-flow-working').css('--f2-progress', '0%');
         $('#search-no-scan-warning').attr('style', 'display: none;');
 
         Object.getOwnPropertyNames(window).forEach(prop => {
@@ -1234,10 +1234,12 @@ $(document).ready(function(){
 
             window[dt]().catch(err => {}).finally(() => {
                 completeddatatablecalls += 1;
-                $('.scan-account').html('Scanning... (' + completeddatatablecalls + '/' + totaldatatables + ')');
+                $('.scan-account')
+                    .html('Scanning&hellip; ' + completeddatatablecalls + ' / ' + totaldatatables)
+                    .css('--f2-progress', Math.round(completeddatatablecalls / totaldatatables * 100) + '%');
                 if (completeddatatablecalls == totaldatatables) {
                     visited_sections.push("all");
-                    $('.scan-account').removeAttr('disabled');
+                    $('.scan-account').removeAttr('disabled').removeClass('f2-flow-working').css('--f2-progress', '');
                     $('.scan-account').html('Scan Again');
                     updateFlowState();
                 }

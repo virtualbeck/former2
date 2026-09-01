@@ -95,6 +95,29 @@
     border-color: #6b7a85;
 }
 
+/* a step that is busy working (e.g. Scan in progress): unclickable but
+   fully visible, with a progress bar along the bottom edge */
+.f2-flow-step.f2-flow-working,
+.f2-flow-step.f2-flow-working[disabled] {
+    opacity: 1;
+    cursor: progress;
+    color: #fff;
+    background-color: #0275d8;
+    border-color: #01447e;
+    overflow: hidden;
+}
+
+.f2-flow-step.f2-flow-working::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 4px;
+    width: var(--f2-progress, 0%);
+    background-color: #9bd4ff;
+    transition: width 0.3s ease;
+}
+
 /* the left-most currently-actionable step */
 .f2-flow-step.f2-flow-next:not([disabled]) {
     background-color: #5cb85c;
