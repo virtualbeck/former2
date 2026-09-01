@@ -122,8 +122,37 @@ $(document).ready(function(){
 
         $('#generate-outputs').text("Generate (" + output_objects.length + ")");
         $('#generate-outputs').removeAttr('disabled');
+        updateFlowState();
 
         return ids;
+    }
+
+    // Guided flow toolbar: enable each step once its prerequisite is met and
+    // highlight the left-most step that is currently actionable.
+    function updateFlowState() {
+        var hasCreds  = !!window.localStorage.getItem('credentials-secretkey');
+        var scanned   = visited_sections.includes("all");
+        var added     = output_objects.length > 0;
+        var tfReady   = (typeof tracked_resources !== "undefined" && tracked_resources &&
+                         tracked_resources.some(function(r){ return r.terraformType; }));
+
+        var steps = [
+            { sel: '.scan-account',     ok: hasCreds, done: scanned },
+            { sel: '#flow-addall',      ok: scanned,  done: added   },
+            { sel: '#generate-outputs', ok: added,    done: tfReady },
+            { sel: '#flow-download',    ok: tfReady,  done: false   }
+        ];
+
+        var nextAssigned = false;
+        steps.forEach(function(step){
+            var $el = $(step.sel);
+            $el.prop('disabled', !step.ok);
+            $el.removeClass('f2-flow-next');
+            if (step.ok && !step.done && !nextAssigned) {
+                $el.addClass('f2-flow-next');
+                nextAssigned = true;
+            }
+        });
     }
 
     function getRelationshipPropertyValues(relation, obj, propertyname) {
@@ -648,6 +677,7 @@ $(document).ready(function(){
             window.localStorage.setItem('credentials-secretkey', val);
             $('.scan-account').removeAttr('disabled');
         }
+        updateFlowState();
         updateIdentity();
     });
     $('#credentials-sessiontoken').on('change', () => {
@@ -955,6 +985,7 @@ $(document).ready(function(){
                 });
             }, 1);
 
+            updateFlowState();
             resolve();
         });
     }
@@ -1172,6 +1203,7 @@ $(document).ready(function(){
         regenerateOutputs();
         $('#generate-outputs').text("Generate");
         $('#generate-outputs').attr('disabled', 'disabled');
+        updateFlowState();
     });
 
     regenerateOutputs();
@@ -1207,6 +1239,7 @@ $(document).ready(function(){
                     visited_sections.push("all");
                     $('.scan-account').removeAttr('disabled');
                     $('.scan-account').html('Scan Again');
+                    updateFlowState();
                 }
 
                 // console.log("Finished " + dt + " - " + Math.ceil((new Date() - starttime)/1000)); // for performance testing
@@ -1223,12 +1256,16 @@ $(document).ready(function(){
         }
     });
 
-    $('#add-all-resources').on('click', () => {
+    function addAllResources() {
         output_objects = [];
         $('.f2datatable').each(function() {
             addAllTableRowsToTemplate("#" + this.id);
         });
-    });
+        updateFlowState();
+    }
+
+    $('#add-all-resources').on('click', addAllResources);
+    $('#flow-addall').on('click', addAllResources);
 
     /* ========================================================================== */
     // AWS SDK Proxy for Extension (must be before Account Scan)
@@ -1408,7 +1445,7 @@ $(document).ready(function(){
         iframe.contentWindow.postMessage(message, '*');
     });
 
-    $('#header-button-download-tfproject').click(function(){
+    function downloadTerraformProject(){
         if (typeof tracked_resources === "undefined" || !tracked_resources || !tracked_resources.some(function(r){ return r.terraformType; })) {
             $.notify({
                 icon: 'font-icon font-icon-warning',
@@ -1420,7 +1457,28 @@ $(document).ready(function(){
             return;
         }
 
-        var files = generateTerraformProject(tracked_resources);
+        if (typeof JSZip === "undefined") {
+            $.notify({
+                icon: 'font-icon font-icon-danger',
+                title: '<strong>Download Project unavailable</strong>',
+                message: 'The JSZip library failed to load.'
+            },{ type: 'danger' });
+            return;
+        }
+
+        var files;
+        try {
+            files = generateTerraformProject(tracked_resources);
+        } catch (err) {
+            f2trace(err);
+            $.notify({
+                icon: 'font-icon font-icon-danger',
+                title: '<strong>Could not build the project</strong>',
+                message: (err && err.message) ? err.message : String(err)
+            },{ type: 'danger' });
+            return;
+        }
+
         var zip = new JSZip();
         var folder = zip.folder("former2-terraform");
         Object.keys(files).forEach(function(path){
@@ -1437,8 +1495,18 @@ $(document).ready(function(){
             element.click();
             document.body.removeChild(element);
             setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+        }).catch(function(err){
+            f2trace(err);
+            $.notify({
+                icon: 'font-icon font-icon-danger',
+                title: '<strong>Could not package the zip</strong>',
+                message: (err && err.message) ? err.message : String(err)
+            },{ type: 'danger' });
         });
-    });
+    }
+
+    $('#header-button-download-tfproject').click(downloadTerraformProject);
+    $('#flow-download').click(downloadTerraformProject);
 
     window.addEventListener('message', (message) => {
         var evt = {};
@@ -1659,6 +1727,8 @@ $(document).ready(function(){
     if (window.localStorage.getItem('credentials-secretkey')) {
         $('.scan-account').removeAttr('disabled');
     }
+
+    updateFlowState();
 
 }); // <-- End of documentReady
 

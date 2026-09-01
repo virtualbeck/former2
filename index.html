@@ -138,11 +138,24 @@
                         <div class="site-header-collapsed">
                             <div class="site-header-collapsed-in" style="margin-right: 0;">
 
-                                <button class="btn btn-nav btn-inline btn-primary" id="generate-outputs" disabled>
-                                    Generate
-                                </button>
+                                <div class="f2-flow">
+                                    <button type="button" class="btn btn-inline f2-flow-step" id="flow-download" data-step="4" disabled title="Download a modules + workspace Terraform repo (zip)">
+                                        Download Project
+                                    </button>
+                                    <span class="f2-flow-arrow">&#8592;</span>
+                                    <button type="button" class="btn btn-inline f2-flow-step" id="generate-outputs" data-step="3" disabled title="Map the added resources to IaC and populate the Outputs tabs">
+                                        Generate
+                                    </button>
+                                    <span class="f2-flow-arrow">&#8592;</span>
+                                    <button type="button" class="btn btn-inline f2-flow-step" id="flow-addall" data-step="2" disabled title="Add every scanned resource to the output set">
+                                        Add Resources
+                                    </button>
+                                    <span class="f2-flow-arrow">&#8592;</span>
+                                    <button type="button" disabled class="btn btn-inline f2-flow-step scan-account" data-step="1" title="Enumerate resources in the selected region">
+                                        Scan Account
+                                    </button>
 
-                                <div class="dropdown" style="float: right;">
+                                    <div class="dropdown f2-flow-region">
                                     <button class="btn btn-rounded btn-inline btn-secondary dropdown-toggle" id="selected-region" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">&nbsp;&nbsp;</button>
                                     <div class="dropdown-menu" aria-labelledby="selected-region">
                                         <a class="dropdown-item region-item" data-region="us-east-1">US East (N. Virginia)</a>
@@ -180,11 +193,8 @@
                                         <a class="dropdown-item region-item" data-region="cn-north-1">China (Beijing)</a>
                                         <a class="dropdown-item region-item" data-region="cn-northwest-1">China (Ningxia)</a>
                                     </div>
+                                    </div>
                                 </div>
-
-                                <button disabled class="btn btn-sm btn-success scan-account" style="margin-right: 10px; float: right; padding-top: 3px; margin-bottom: 8px;">
-                                    Scan Account
-                                </button>
 
                                 <div class="site-header-search-container">
                                     <form id="minisearch-form" class="site-header-search closed">
@@ -1430,7 +1440,7 @@
                                 <br />
                                 <div class="form-group">
                                     <h5>Add All Resources&nbsp;<span data-tippy-content="Experimental"><i class="fa fa-warning" style="color: #f29824;"></i></span></h5>
-                                    <p>Use the below button to add all scanned resources to the outputs (not recommended):</p>
+                                    <p>Add every scanned resource to the output set. This is the basis for a whole-account export (see the "Add Resources" step in the top toolbar); for a targeted template, pick resources individually instead.</p>
                                     <button id="add-all-resources" class="btn btn-sm btn-primary">
                                         Add All Resources
                                     </button>
