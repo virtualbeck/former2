@@ -9,7 +9,8 @@
 # Go is taken from $PATH; override with `make GO=/path/to/go ...`
 # (this repo's local toolchain lives at ~/.local/go/bin/go).
 
-GO      ?= go
+# Prefer a `go` on PATH; fall back to this repo's local toolchain.
+GO      ?= $(shell command -v go 2>/dev/null || echo $(HOME)/.local/go/bin/go)
 PKG     := github.com/virtualbeck/former2/tfcli
 BIN     := former2-tf
 
@@ -31,9 +32,9 @@ BUILD_ENV := CGO_ENABLED=0
 .PHONY: build dist native test vet sync clean install version help
 
 build: ## vet + test, then cross-compile every PLATFORMS entry
-	$(MAKE) --no-print-directory vet
-	$(MAKE) --no-print-directory test
-	$(MAKE) --no-print-directory dist
+	$(MAKE) --no-print-directory GO='$(GO)' vet
+	$(MAKE) --no-print-directory GO='$(GO)' test
+	$(MAKE) --no-print-directory GO='$(GO)' dist
 
 dist: ## cross-compile only (no checks) -> dist/
 	@mkdir -p dist
