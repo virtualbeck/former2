@@ -129,7 +129,19 @@ func (c *Client) Call(ctx context.Context, sdkClass, method string, params map[s
 	if err != nil {
 		return nil, fmt.Errorf("credentials: %w", err)
 	}
-	if err := c.signer.SignHTTP(ctx, creds, req, payloadHash, signingName, signRegion, time.Now()); err != nil {
+	// S3 (and a few other services) reject a SigV4 request that omits the
+	// X-Amz-Content-Sha256 header. This signer build never adds it on its own,
+	// so set it explicitly before signing (it then lands in SignedHeaders).
+	// Harmless for every other service.
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	var signOpts []func(*v4.SignerOptions)
+	if sdkClass == "S3" {
+		// S3 keys can contain otherwise-reserved characters; its canonical
+		// request must use the raw, un-re-escaped path.
+		signOpts = append(signOpts, func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
+	}
+	if err := c.signer.SignHTTP(ctx, creds, req, payloadHash, signingName, signRegion, time.Now(), signOpts...); err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 	if bodyBytes != nil {

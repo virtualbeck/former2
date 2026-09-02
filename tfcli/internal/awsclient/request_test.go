@@ -82,10 +82,11 @@ func TestBuildQueryForm(t *testing.T) {
 }
 
 func TestCallEndToEndSigned(t *testing.T) {
-	var gotAuth, gotTarget string
+	var gotAuth, gotTarget, gotSha string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotTarget = r.Header.Get("X-Amz-Target")
+		gotSha = r.Header.Get("X-Amz-Content-Sha256")
 		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
 		io.WriteString(w, `{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/1/a"]}`)
 	}))
@@ -104,6 +105,15 @@ func TestCallEndToEndSigned(t *testing.T) {
 	}
 	if gotTarget != "AmazonSQS.ListQueues" {
 		t.Fatalf("target = %q", gotTarget)
+	}
+	// S3 rejects requests without this header; it must be the body hash.
+	// (SQS ListQueues marshals an empty JSON object body.)
+	const emptyObjSha = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+	if gotSha != emptyObjSha {
+		t.Fatalf("x-amz-content-sha256 = %q", gotSha)
+	}
+	if !strings.Contains(gotAuth, "x-amz-content-sha256") {
+		t.Fatalf("content-sha256 not in SignedHeaders: %q", gotAuth)
 	}
 	if urls, ok := out["QueueUrls"].([]interface{}); !ok || len(urls) != 1 {
 		t.Fatalf("out = %#v", out)
