@@ -7,10 +7,10 @@ import (
 
 type testLogger struct{ t *testing.T }
 
-func (l testLogger) Debug(m string)          { l.t.Logf("debug: %s", m) }
-func (l testLogger) Warn(m string)           { l.t.Logf("warn:  %s", m) }
-func (l testLogger) Notify(a, b string)      { l.t.Logf("notify: %s | %s", a, b) }
-func (l testLogger) Progress(done, tot int)  {}
+func (l testLogger) Debug(m string)         { l.t.Logf("debug: %s", m) }
+func (l testLogger) Warn(m string)          { l.t.Logf("warn:  %s", m) }
+func (l testLogger) Notify(a, b string)     { l.t.Logf("notify: %s | %s", a, b) }
+func (l testLogger) Progress(done, tot int) {}
 
 const rawSQS = `[{
   "f2id":"https://sqs.us-east-1.amazonaws.com/123456789012/myq",
@@ -154,6 +154,60 @@ func TestGeneratePipelineOffline(t *testing.T) {
 	}
 	if _, ok := files["workspaces/dev/main.tf"]; !ok {
 		t.Fatalf("missing workspace main.tf")
+	}
+}
+
+func TestMultiRegionProviderAlignment(t *testing.T) {
+	e := newTestEngine(t)
+	defer e.Close()
+
+	// two VPCs: one us-east-1 (primary), one us-west-2 (aliased).
+	const raw = `[
+ {"f2id":"vpc-east","f2type":"ec2.vpc","f2region":"us-east-1","f2data":{"VpcId":"vpc-east","CidrBlock":"10.0.0.0/16","InstanceTenancy":"default","Tags":[{"Key":"Name","Value":"east"}]}},
+ {"f2id":"vpc-west","f2type":"ec2.vpc","f2region":"us-west-2","f2data":{"VpcId":"vpc-west","CidrBlock":"10.1.0.0/16","InstanceTenancy":"default","Tags":[{"Key":"Name","Value":"west"}]}}
+]`
+	if _, err := e.LoadRaw([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Prepare(PrepareOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// flat
+	tf, err := e.GenerateTf()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tf, `provider "aws" {`) || !strings.Contains(tf, `alias  = "us_west_2"`) {
+		t.Fatalf("flat output missing aliased provider:\n%s", tf)
+	}
+	if !strings.Contains(tf, "provider = aws.us_west_2") {
+		t.Fatalf("flat output: west resource not pinned to alias:\n%s", tf)
+	}
+
+	// project
+	files, err := e.GenerateProject("prod", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov := files["workspaces/prod/provider.tf"]
+	if !strings.Contains(prov, `alias  = "us_west_2"`) || !strings.Contains(prov, `region = "us-west-2"`) {
+		t.Fatalf("workspace provider.tf missing us-west-2 alias:\n%s", prov)
+	}
+	modProv := files["modules/network/providers.tf"]
+	if !strings.Contains(modProv, "configuration_aliases = [aws.us_west_2]") {
+		t.Fatalf("network module missing configuration_aliases:\n%s", modProv)
+	}
+	wsMain := files["workspaces/prod/main.tf"]
+	if !strings.Contains(wsMain, "aws.us_west_2 = aws.us_west_2") {
+		t.Fatalf("workspace main.tf not passing the alias to the module:\n%s", wsMain)
+	}
+	netMain := files["modules/network/main.tf"]
+	if !strings.Contains(netMain, "provider = aws.us_west_2") {
+		t.Fatalf("network module: west VPC not pinned to alias:\n%s", netMain)
+	}
+	if strings.Count(netMain, "provider = aws.") != 1 {
+		t.Fatalf("expected exactly one aliased resource in network module:\n%s", netMain)
 	}
 }
 

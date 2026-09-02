@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -25,21 +24,8 @@ func scanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			eng, region, _, err := newEngine(ctx)
-			if err != nil {
-				return err
-			}
-			defer eng.Close()
-
-			fmt.Fprintf(os.Stderr, "scanning %s ...\n", region)
-			start := time.Now()
-			n, err := eng.Scan(opts)
-			if err != nil {
-				return fmt.Errorf("scan: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "  found %d resources in %s\n", n, time.Since(start).Round(time.Second))
-
-			raw, err := eng.DumpRaw()
+			log := newConsoleLogger(flagDebug, flagQuiet)
+			raw, _, err := scanRawResources(ctx, opts, log)
 			if err != nil {
 				return err
 			}

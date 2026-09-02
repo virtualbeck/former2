@@ -4266,6 +4266,27 @@ function compileOutputs(tracked_resources, cfn_deletion_policy) {
         region = tracked_resources[0].region;
     }
 
+    // Multi-region flat output: default provider on the primary region
+    // (us-east-1 when present), aliased `provider "aws"` blocks for the rest,
+    // and `provider = aws.<alias>` on each out-of-region resource.
+    var tfRegionSet = {};
+    for (var ri = 0; ri < tracked_resources.length; ri++) {
+        if (tracked_resources[ri].terraformType && tracked_resources[ri].region) {
+            tfRegionSet[tracked_resources[ri].region] = 1;
+        }
+    }
+    var tfRegionList = Object.keys(tfRegionSet).sort();
+    if (tfRegionList.length) {
+        region = tfRegionList.indexOf('us-east-1') !== -1 ? 'us-east-1' : tfRegionList[0];
+    }
+    var tfAliasOf = {};
+    tfRegionList.forEach(function (rg) {
+        tfAliasOf[rg] = (rg === region) ? '' : rg.replace(/[^A-Za-z0-9_]/g, '_');
+    });
+    var tfExtraProviders = tfRegionList.filter(function (rg) { return rg !== region; }).map(function (rg) {
+        return '\nprovider "aws" {\n    alias  = "' + tfAliasOf[rg] + '"\n    region = "' + rg + '"\n}\n';
+    }).join('');
+
     compiled = {
         'boto3': null,
         'go': null,
@@ -4286,9 +4307,9 @@ Description: ""
 }
 
 provider "aws" {
-    region = "${tracked_resources[0].region}"
+    region = "${region}"
 }
-`}`,
+${tfExtraProviders}`}`,
         'pulumi': `${(iaclangselect == "typescript") ? `${!has_tf ? '// No resources generated' : `import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 `}` : '// Selected programming language not supported for this output'}`,
@@ -4478,7 +4499,12 @@ ${cfnspacing}${cfnspacing}  - "`)}"
         }
         if (tracked_resources[i].terraformType) {
             f2debug(tracked_resources[i].terraformType);
-            compiled['tf'] += outputMapTf(i, tracked_resources[i].service, tracked_resources[i].terraformType, tracked_resources[i].options.tf, tracked_resources[i].region, tracked_resources[i].was_blocked, tracked_resources[i].logicalId, tracked_resources);
+            var tfblock = outputMapTf(i, tracked_resources[i].service, tracked_resources[i].terraformType, tracked_resources[i].options.tf, tracked_resources[i].region, tracked_resources[i].was_blocked, tracked_resources[i].logicalId, tracked_resources);
+            var tfalias = tracked_resources[i].region ? tfAliasOf[tracked_resources[i].region] : '';
+            if (tfalias) {
+                tfblock = tfblock.replace(/(resource\s+"[^"]+"\s+"[^"]+"\s*\{[ \t]*\n)/, '$1    provider = aws.' + tfalias + '\n');
+            }
+            compiled['tf'] += tfblock;
             if (['typescript'].includes(iaclangselect)) {
                 compiled['pulumi'] += outputMapPulumi(i, tracked_resources[i].service, tracked_resources[i].terraformType, tracked_resources[i].options.tf, tracked_resources[i].region, tracked_resources[i].was_blocked, tracked_resources[i].logicalId, tracked_resources);
                 compiled['cdktf'] += outputMapCdktf(i, tracked_resources[i].service, tracked_resources[i].terraformType, tracked_resources[i].options.tf, tracked_resources[i].region, tracked_resources[i].was_blocked, tracked_resources[i].logicalId, tracked_resources);

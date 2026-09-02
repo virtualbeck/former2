@@ -36,17 +36,19 @@ func prepareEngine(ctx context.Context, from string, sf scanFlags, pf prepareFla
 		if err != nil {
 			return nil, err
 		}
-		e, region, _, err := newEngine(ctx)
+		log := newConsoleLogger(flagDebug, flagQuiet)
+		raw, _, err := scanRawResources(ctx, scanOpts, log)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(os.Stderr, "scanning %s ...\n", region)
-		n, err := e.Scan(scanOpts)
+		e, _, err := newOfflineEngine()
 		if err != nil {
-			e.Close()
-			return nil, fmt.Errorf("scan: %w", err)
+			return nil, err
 		}
-		fmt.Fprintf(os.Stderr, "  found %d resources\n", n)
+		if _, err := e.LoadRaw(raw); err != nil {
+			e.Close()
+			return nil, fmt.Errorf("load scanned resources: %w", err)
+		}
 		eng = e
 	}
 
