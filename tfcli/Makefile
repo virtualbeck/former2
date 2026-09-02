@@ -1,8 +1,10 @@
 # former2-tf build
 #
-#   make build              native binary  -> bin/former2-tf
-#   make dist               cross-compile all PLATFORMS -> dist/
-#   make test / vet / sync / clean
+#   make            vet + test, then cross-compile all PLATFORMS -> dist/
+#   make build      same as above (default)
+#   make dist       cross-compile only, no checks
+#   make native     quick single-arch build -> bin/former2-tf, no checks
+#   make test / vet / sync / clean / install / version / help
 #
 # Go is taken from $PATH; override with `make GO=/path/to/go ...`
 # (this repo's local toolchain lives at ~/.local/go/bin/go).
@@ -25,13 +27,15 @@ LDFLAGS := -s -w \
 
 BUILD_ENV := CGO_ENABLED=0
 
-.PHONY: build dist test vet sync clean install version help
+.DEFAULT_GOAL := build
+.PHONY: build dist native test vet sync clean install version help
 
-build: ## native static binary -> bin/former2-tf
-	$(BUILD_ENV) $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/$(BIN) .
-	@echo "built bin/$(BIN)  ($(VERSION))"
+build: ## vet + test, then cross-compile every PLATFORMS entry
+	$(MAKE) --no-print-directory vet
+	$(MAKE) --no-print-directory test
+	$(MAKE) --no-print-directory dist
 
-dist: ## cross-compile every PLATFORMS entry -> dist/
+dist: ## cross-compile only (no checks) -> dist/
 	@mkdir -p dist
 	@$(foreach p,$(PLATFORMS), \
 		os=$(word 1,$(subst /, ,$(p))); arch=$(word 2,$(subst /, ,$(p))); \
@@ -39,7 +43,11 @@ dist: ## cross-compile every PLATFORMS entry -> dist/
 		echo "-> $${out}"; \
 		$(BUILD_ENV) GOOS=$${os} GOARCH=$${arch} $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $${out} . || exit 1; \
 	)
-	@echo "done: $$(ls dist/)"
+	@echo "done ($(VERSION)): $$(ls dist/)"
+
+native: ## quick native static binary (no checks) -> bin/former2-tf
+	$(BUILD_ENV) $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/$(BIN) .
+	@echo "built bin/$(BIN)  ($(VERSION))"
 
 test: ## run the test suite
 	$(GO) test ./...
