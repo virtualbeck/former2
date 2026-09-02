@@ -98,7 +98,11 @@ func writeProject(dir, zipPath string, files map[string]string) error {
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 				return err
 			}
-			if err := os.WriteFile(dst, []byte(files[p]), 0o644); err != nil {
+			mode := os.FileMode(0o644)
+			if strings.HasSuffix(p, ".sh") {
+				mode = 0o755
+			}
+			if err := os.WriteFile(dst, []byte(files[p]), mode); err != nil {
 				return err
 			}
 		}

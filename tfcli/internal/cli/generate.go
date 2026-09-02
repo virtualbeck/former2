@@ -63,7 +63,7 @@ func generateCmd() *cobra.Command {
 	var sf scanFlags
 	var pf prepareFlags
 	var from, out string
-	var withImports bool
+	var withImports, withImportScript bool
 
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -81,29 +81,46 @@ func generateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("generate: %w", err)
 			}
+			if err := writeOutput(out, tf); err != nil {
+				return err
+			}
+			dir := "."
+			if out != "" && out != "-" {
+				dir = filepath.Dir(out)
+			}
+
 			if withImports {
 				imp, err := eng.GenerateImports()
 				if err != nil {
 					return fmt.Errorf("imports: %w", err)
 				}
 				if out == "" || out == "-" {
-					return writeOutput("", tf+"\n\n"+imp.Content)
+					fmt.Print("\n\n" + imp.Content)
+				} else {
+					p := filepath.Join(dir, "imports.tf")
+					if err := writeOutput(p, imp.Content); err != nil {
+						return err
+					}
+					reportImports(p, imp.Content)
 				}
-				if err := writeOutput(out, tf); err != nil {
-					return err
-				}
-				impPath := filepath.Join(filepath.Dir(out), "imports.tf")
-				if err := writeOutput(impPath, imp.Content); err != nil {
-					return err
-				}
-				fmt.Fprintf(os.Stderr, "  %s: %d import block(s)", impPath, imp.Count)
-				if len(imp.Todo) > 0 {
-					fmt.Fprintf(os.Stderr, ", %d need a manual id (REPLACE_ME)", len(imp.Todo))
-				}
-				fmt.Fprintln(os.Stderr)
-				return nil
 			}
-			return writeOutput(out, tf)
+			if withImportScript {
+				s, err := eng.GenerateImportScript()
+				if err != nil {
+					return fmt.Errorf("import script: %w", err)
+				}
+				if out == "" || out == "-" {
+					fmt.Print("\n\n" + s.Content)
+				} else {
+					p := filepath.Join(dir, "import.sh")
+					if err := writeOutput(p, s.Content); err != nil {
+						return err
+					}
+					_ = os.Chmod(p, 0o755)
+					reportImports(p, s.Content)
+				}
+			}
+			return nil
 		},
 	}
 	sf.bind(cmd)
@@ -111,5 +128,6 @@ func generateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&from, "from", "", "raw data file from `scan` (skip scanning)")
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output .tf file (default stdout)")
 	cmd.Flags().BoolVar(&withImports, "imports", false, "also emit import blocks (imports.tf beside --out, or appended on stdout)")
+	cmd.Flags().BoolVar(&withImportScript, "import-script", false, "also emit a state-only `tofu import` script (import.sh beside --out)")
 	return cmd
 }

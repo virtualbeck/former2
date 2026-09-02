@@ -9,18 +9,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// reportImports prints a one-line summary of a generated imports.tf.
+// reportImports prints a one-line summary of a generated imports.tf / import.sh.
 func reportImports(path, content string) {
 	active, todo := 0, 0
+	isScript := strings.HasSuffix(path, ".sh")
 	for _, ln := range strings.Split(content, "\n") {
 		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "to = ") {
+		switch {
+		case isScript && strings.HasPrefix(t, "imp "):
 			active++
-		} else if strings.HasPrefix(t, "#   to = ") {
+		case isScript && strings.HasPrefix(t, "# imp "):
+			todo++
+		case !isScript && strings.HasPrefix(t, "to = "):
+			active++
+		case !isScript && strings.HasPrefix(t, "#   to = "):
 			todo++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "  %s: %d import block(s)", path, active)
+	unit := "import block(s)"
+	if isScript {
+		unit = "tofu import command(s)"
+	}
+	fmt.Fprintf(os.Stderr, "  %s: %d %s", path, active, unit)
 	if todo > 0 {
 		fmt.Fprintf(os.Stderr, ", %d need a manual id (REPLACE_ME)", todo)
 	}
@@ -31,7 +41,7 @@ func projectCmd() *cobra.Command {
 	var sf scanFlags
 	var pf prepareFlags
 	var from, out, zipPath, env string
-	var withImports bool
+	var withImports, withImportScript bool
 
 	cmd := &cobra.Command{
 		Use:   "project",
@@ -47,18 +57,16 @@ func projectCmd() *cobra.Command {
 			}
 			defer eng.Close()
 
-			files, err := eng.GenerateProject(env, withImports)
+			files, err := eng.GenerateProject(env, withImports, withImportScript)
 			if err != nil {
 				return fmt.Errorf("project: %w", err)
 			}
 			if err := writeProject(out, zipPath, files); err != nil {
 				return err
 			}
-			if withImports {
-				for p, c := range files {
-					if strings.HasSuffix(p, "/imports.tf") {
-						reportImports(p, c)
-					}
+			for p, c := range files {
+				if strings.HasSuffix(p, "/imports.tf") || strings.HasSuffix(p, "/import.sh") {
+					reportImports(p, c)
 				}
 			}
 			return nil
@@ -70,6 +78,7 @@ func projectCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output directory for the project tree")
 	cmd.Flags().StringVar(&zipPath, "zip", "", "also write the project as a zip archive")
 	cmd.Flags().StringVar(&env, "env", "dev", "environment / workspace name")
-	cmd.Flags().BoolVar(&withImports, "imports", false, "also emit workspaces/<env>/imports.tf with Terraform import blocks")
+	cmd.Flags().BoolVar(&withImports, "imports", false, "emit workspaces/<env>/imports.tf (import blocks; `apply` imports AND applies drift)")
+	cmd.Flags().BoolVar(&withImportScript, "import-script", false, "emit workspaces/<env>/import.sh (`tofu import` per resource; state-only, never applies)")
 	return cmd
 }

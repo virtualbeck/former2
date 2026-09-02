@@ -16,7 +16,7 @@ func adoptCmd() *cobra.Command {
 	var sf scanFlags
 	var pf prepareFlags
 	var from, out, env, tofuBin string
-	var runTofu bool
+	var runTofu, withImports, withImportScript bool
 
 	cmd := &cobra.Command{
 		Use:   "adopt",
@@ -39,7 +39,7 @@ func adoptCmd() *cobra.Command {
 			}
 			defer eng.Close()
 
-			files, err := eng.GenerateProject(env, true)
+			files, err := eng.GenerateProject(env, withImports, withImportScript)
 			if err != nil {
 				return fmt.Errorf("project: %w", err)
 			}
@@ -47,7 +47,7 @@ func adoptCmd() *cobra.Command {
 				return err
 			}
 			for p, c := range files {
-				if strings.HasSuffix(p, "/imports.tf") {
+				if strings.HasSuffix(p, "/imports.tf") || strings.HasSuffix(p, "/import.sh") {
 					reportImports(filepath.Join(out, p), c)
 				}
 			}
@@ -70,7 +70,7 @@ func adoptCmd() *cobra.Command {
 						fmt.Fprintf(os.Stderr,
 							"\ntofu validate failed (see above) — fix the generated HCL, then\n"+
 								"  former2-tf drift --dir %s --init\n", wsDir)
-						fmt.Fprint(os.Stderr, adoptRunbook(wsDir))
+						fmt.Fprint(os.Stderr, adoptRunbook(wsDir, withImportScript))
 						return nil
 					}
 					fmt.Fprintln(os.Stderr, "· tofu plan")
@@ -95,7 +95,7 @@ func adoptCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Fprint(os.Stderr, adoptRunbook(wsDir))
+			fmt.Fprint(os.Stderr, adoptRunbook(wsDir, withImportScript))
 			return nil
 		},
 	}
@@ -105,19 +105,27 @@ func adoptCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&out, "out", "o", "infra", "output directory for the Terraform repo")
 	cmd.Flags().StringVar(&env, "env", "dev", "environment / workspace name")
 	cmd.Flags().StringVar(&tofuBin, "tofu", "", "path to tofu/terraform (default: auto-detect)")
-	cmd.Flags().BoolVar(&runTofu, "tofu-plan", true, "run tofu fmt/init/plan and print a drift report")
+	cmd.Flags().BoolVar(&runTofu, "tofu-plan", true, "run tofu fmt/init/validate/plan and print a drift report")
+	cmd.Flags().BoolVar(&withImports, "imports", true, "emit imports.tf (import blocks)")
+	cmd.Flags().BoolVar(&withImportScript, "import-script", false, "emit import.sh instead of/as well as imports.tf (state-only `tofu import`)")
 	return cmd
 }
 
-func adoptRunbook(wsDir string) string {
+func adoptRunbook(wsDir string, script bool) string {
+	populate := "tofu apply                 # consumes imports.tf: imports AND applies any drift - review the plan first"
+	cleanup := "# once plan is clean: delete imports.tf, commit, continue only via IaC"
+	if script {
+		populate = "./import.sh                 # `tofu import` per resource - only writes state, never applies"
+		cleanup = "# once plan is clean: commit and continue only via IaC"
+	}
 	return fmt.Sprintf(`
 runbook:
   cd %s
-  tofu init && tofu plan            # review; iterate on the HCL until clean
-  tofu apply                        # consumes imports.tf, populates state
-  # then delete imports.tf, commit, and continue only via IaC
-  former2-tf drift --dir %s         # re-check any time
-`, wsDir, wsDir)
+  tofu init
+  former2-tf drift --dir .    # iterate on the HCL until it prints "clean"
+  %s
+  %s
+`, wsDir, populate, cleanup)
 }
 
 var nonIdent = regexp.MustCompile(`[^A-Za-z0-9_]`)

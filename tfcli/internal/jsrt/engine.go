@@ -321,10 +321,11 @@ func (e *Engine) GenerateTf() (string, error) {
 	return fmt.Sprintf("%v", v), nil
 }
 
-// GenerateProject runs step 4 and returns a path -> content map. When
-// withImports is set, an imports.tf with Terraform import blocks is included.
-func (e *Engine) GenerateProject(env string, withImports bool) (map[string]string, error) {
-	v, err := e.callAsync("__generateProject", env, withImports)
+// GenerateProject runs step 4 and returns a path -> content map. imports adds
+// workspaces/<env>/imports.tf (import blocks); importScript adds import.sh
+// (per-resource `tofu import`, state-only).
+func (e *Engine) GenerateProject(env string, imports, importScript bool) (map[string]string, error) {
+	v, err := e.callAsync("__generateProject", env, imports, importScript)
 	if err != nil {
 		return nil, err
 	}
@@ -345,13 +346,22 @@ type ImportsResult struct {
 // GenerateImports returns Terraform import blocks for the flat layout
 // (addresses are <type>.<logicalId>). Prepare must have run.
 func (e *Engine) GenerateImports() (ImportsResult, error) {
+	return e.importsCall("__generateImports")
+}
+
+// GenerateImportScript returns a `tofu import` bash script for the flat layout.
+func (e *Engine) GenerateImportScript() (ImportsResult, error) {
+	return e.importsCall("__generateImportScript")
+}
+
+func (e *Engine) importsCall(fn string) (ImportsResult, error) {
 	var res ImportsResult
-	v, err := e.callAsync("__generateImports")
+	v, err := e.callAsync(fn)
 	if err != nil {
 		return res, err
 	}
 	if err := json.Unmarshal([]byte(fmt.Sprintf("%v", v)), &res); err != nil {
-		return res, fmt.Errorf("decode imports: %w", err)
+		return res, fmt.Errorf("decode %s: %w", fn, err)
 	}
 	return res, nil
 }

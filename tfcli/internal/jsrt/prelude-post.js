@@ -103,14 +103,15 @@ function __generateTf() {
     return out.tf;
 }
 
-function __generateProject(env, withImports) {
+function __generateProject(env, withImports, withImportScript) {
     // former2's UI always runs Generate (compileOutputs) before the project
     // build; that also initialises tracked_relationships / global_used_refs,
     // which tfproject.js's outputMapTf path relies on.
     compileOutputs(tracked_resources, null);
     var files = generateTerraformProject(tracked_resources, {
         environment: env || "dev",
-        imports: !!withImports
+        imports: !!withImports,
+        importScript: !!withImportScript
     });
     return JSON.stringify(files);
 }
@@ -119,6 +120,12 @@ function __generateProject(env, withImports) {
 function __generateImports() {
     var imp = generateTerraformImports(tracked_resources, {});
     return JSON.stringify({ content: imp.content, count: imp.count, todo: imp.todo });
+}
+
+// Flat `tofu import` script.
+function __generateImportScript() {
+    var s = generateTerraformImportScript(tracked_resources, {});
+    return JSON.stringify({ content: s.content, count: s.count, todo: s.todo });
 }
 
 function __logicalIdMap() {

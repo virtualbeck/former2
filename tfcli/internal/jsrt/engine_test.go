@@ -52,7 +52,7 @@ func TestProjectCrossModuleWiring(t *testing.T) {
 	if _, err := e.Prepare(PrepareOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	files, err := e.GenerateProject("prod", false)
+	files, err := e.GenerateProject("prod", false, false)
 	if err != nil {
 		t.Fatalf("GenerateProject: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestGenerateImports(t *testing.T) {
 	}
 
 	// project layout: addresses must be module-qualified
-	files, err := e.GenerateProject("prod", true)
+	files, err := e.GenerateProject("prod", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestGeneratePipelineOffline(t *testing.T) {
 	}
 	t.Logf("flat tf:\n%s", tf)
 
-	files, err := e.GenerateProject("dev", false)
+	files, err := e.GenerateProject("dev", false, false)
 	if err != nil {
 		t.Fatalf("GenerateProject: %v", err)
 	}

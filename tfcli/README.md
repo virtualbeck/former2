@@ -102,18 +102,32 @@ changes** — a "continue only via IaC" baseline.
 former2-tf adopt --profile myprofile --region us-east-1 --out infra --env prod
 ```
 
-`adopt` writes `infra/` (see `project` above) plus
-`infra/workspaces/prod/imports.tf` — a Terraform `import {}` block per
-discovered resource, addressed at `module.<group>.<type>.<name>`. It then runs
-`tofu fmt`, `init`, `validate` and `plan` and prints a drift report. It does
-**not** apply anything.
+`adopt` writes `infra/` (see `project` above) plus, in
+`infra/workspaces/prod/`, one or both of:
+
+- **`imports.tf`** (`--imports`, default) — Terraform `import {}` blocks,
+  addressed `module.<group>.<type>.<name>`. `tofu apply` consumes them **and
+  applies any diff** between the generated HCL and reality, so review the plan
+  first.
+- **`import.sh`** (`--import-script`) — a `tofu import` call per resource.
+  `tofu import` **only writes state** — it never changes an AWS resource and
+  never applies a diff. Idempotent (re-runnable). Use this if you want zero
+  chance of a mutation while you reconcile.
+
+`adopt` then runs `tofu fmt`, `init`, `validate`, `plan` and prints a drift
+report. **Nothing is applied.**
 
 Then iterate:
 
 ```sh
 cd infra/workspaces/prod
-tofu apply                       # consumes imports.tf -> state is populated
-former2-tf drift --dir .         # what still isn't `no-op`?
+former2-tf drift --dir .          # iterate on the HCL until it prints "clean"
+
+# populate state — pick one:
+./import.sh                       # state-only, safe at any point
+tofu apply                        # only after the plan is clean (imports + no-ops)
+
+former2-tf drift --dir .          # confirm: no changes
 ```
 
 `drift` groups the plan:
@@ -138,8 +152,8 @@ former2 discovered (`vpc-…`, bucket name, ARN, …). Composite ids
 computed. Types with no automatic id are emitted as commented blocks marked
 `REPLACE_ME`; `adopt`/`project --imports` report how many.
 
-`project --imports` and `generate --imports` produce the same blocks without
-running tofu.
+`project` / `generate` / `all` take `--imports` and `--import-script`
+independently, producing the same files without running tofu.
 
 ## Common flags
 

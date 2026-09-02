@@ -364,10 +364,14 @@ function generateTerraformProject(tracked_resources, options) {
 
     files['README.md'] = tfProjectReadme(env, region, regionList, groupNames, tfResources.length, crossRefs.length, multiRegion);
 
-    // Optional: Terraform import blocks (adopt an existing account into state).
+    // Optional: adopt an existing account into state.
+    //  - import blocks: `tofu apply` imports AND applies any diff
+    //  - import.sh:     `tofu import` per resource, only ever writes state
     if (options.imports && typeof generateTerraformImports === 'function') {
-        var imp = generateTerraformImports(tracked_resources, { groupOf: groupOf });
-        files[wsDir + 'imports.tf'] = imp.content;
+        files[wsDir + 'imports.tf'] = generateTerraformImports(tracked_resources, { groupOf: groupOf }).content;
+    }
+    if (options.importScript && typeof generateTerraformImportScript === 'function') {
+        files[wsDir + 'import.sh'] = generateTerraformImportScript(tracked_resources, { groupOf: groupOf }).content;
     }
 
     files['.gitignore'] =
