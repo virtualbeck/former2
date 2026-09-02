@@ -213,10 +213,7 @@ function processTfParameter(param, spacing, keyname, index, tracked_resources) {
                 } else if (subvalue[0] == '{') {
                     paramitems.push(key + " " + subvalue);
                 } else {
-                    if (key.match(/^[0-9]+$/g)) {
-                        key = "\"" + key + "\"";
-                    }
-                    paramitems.push(key + " = " + subvalue);
+                    paramitems.push(tfHclKey(key) + " = " + subvalue);
                 }
             }
         });
@@ -253,10 +250,7 @@ function processTfParameter(param, spacing, keyname, index, tracked_resources) {
                 } else if (subvalue[0] == '{') {
                     paramitems.push(key + " " + subvalue);
                 } else {
-                    if (key.match(/^[0-9]+$/g)) {
-                        key = "\"" + key + "\"";
-                    }
-                    paramitems.push(key + " = " + subvalue);
+                    paramitems.push(tfHclKey(key) + " = " + subvalue);
                 }
             }
         });
@@ -2562,9 +2556,7 @@ function outputMapTf(index, service, type, options, region, was_blocked, logical
                                 params += `
     ${option} ${optionvalue}`;
                             } else {
-                                if (option.match(/^[0-9]+$/g)) {
-                                    option = "\"" + option + "\"";
-                                }
+                                option = tfHclKey(option);
                                 params += `
     ${option} = ${optionvalue}`;
                             }
@@ -2581,9 +2573,7 @@ function outputMapTf(index, service, type, options, region, was_blocked, logical
                             params += `
     ${option} ${optionvalue}`;
                         } else {
-                            if (option.match(/^[0-9]+$/g)) {
-                                option = "\"" + option + "\"";
-                            }
+                            option = tfHclKey(option);
                             params += `
     ${option} = ${optionvalue}`;
                         }

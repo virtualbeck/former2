@@ -156,3 +156,33 @@ func TestGeneratePipelineOffline(t *testing.T) {
 		t.Fatalf("missing workspace main.tf")
 	}
 }
+
+// AWS tag keys often contain ':' '/' '.' etc. Those must be emitted as
+// quoted HCL attribute names or `tofu fmt`/`init` chokes with
+// "Missing attribute separator".
+func TestNonIdentifierTagKeysAreQuoted(t *testing.T) {
+	e := newTestEngine(t)
+	defer e.Close()
+
+	const rawIAM = `[{"f2id":"my-app-role","f2type":"iam.role","f2region":"us-east-1","f2data":{
+	  "RoleName":"my-app-role","RoleId":"AROA","Arn":"arn:aws:iam::123456789012:role/my-app-role","Path":"/",
+	  "AssumeRolePolicyDocument":"%7B%7D",
+	  "Tags":[{"Key":"Environment","Value":"ops"},{"Key":"IAC:ModulePath","Value":"environments/ops/cmdb"}]}}]`
+
+	if _, err := e.LoadRaw([]byte(rawIAM)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Prepare(PrepareOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tf, err := e.GenerateTf()
+	if err != nil {
+		t.Fatalf("GenerateTf: %v", err)
+	}
+	if !strings.Contains(tf, `"IAC:ModulePath" = "environments/ops/cmdb"`) {
+		t.Fatalf("colon tag key not quoted:\n%s", tf)
+	}
+	if strings.Contains(tf, "\n        IAC:ModulePath ") {
+		t.Fatalf("raw unquoted colon key still present:\n%s", tf)
+	}
+}
