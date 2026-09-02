@@ -73,6 +73,11 @@ func writeOutput(path, content string) error {
 		_, err := os.Stdout.WriteString(content)
 		return err
 	}
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return err
 	}

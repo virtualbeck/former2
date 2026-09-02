@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/virtualbeck/former2/tfcli/internal/jsrt"
@@ -62,6 +63,7 @@ func generateCmd() *cobra.Command {
 	var sf scanFlags
 	var pf prepareFlags
 	var from, out string
+	var withImports bool
 
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -79,6 +81,28 @@ func generateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("generate: %w", err)
 			}
+			if withImports {
+				imp, err := eng.GenerateImports()
+				if err != nil {
+					return fmt.Errorf("imports: %w", err)
+				}
+				if out == "" || out == "-" {
+					return writeOutput("", tf+"\n\n"+imp.Content)
+				}
+				if err := writeOutput(out, tf); err != nil {
+					return err
+				}
+				impPath := filepath.Join(filepath.Dir(out), "imports.tf")
+				if err := writeOutput(impPath, imp.Content); err != nil {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "  %s: %d import block(s)", impPath, imp.Count)
+				if len(imp.Todo) > 0 {
+					fmt.Fprintf(os.Stderr, ", %d need a manual id (REPLACE_ME)", len(imp.Todo))
+				}
+				fmt.Fprintln(os.Stderr)
+				return nil
+			}
 			return writeOutput(out, tf)
 		},
 	}
@@ -86,5 +110,6 @@ func generateCmd() *cobra.Command {
 	pf.bind(cmd)
 	cmd.Flags().StringVar(&from, "from", "", "raw data file from `scan` (skip scanning)")
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output .tf file (default stdout)")
+	cmd.Flags().BoolVar(&withImports, "imports", false, "also emit import blocks (imports.tf beside --out, or appended on stdout)")
 	return cmd
 }

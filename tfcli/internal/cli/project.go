@@ -3,14 +3,35 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// reportImports prints a one-line summary of a generated imports.tf.
+func reportImports(path, content string) {
+	active, todo := 0, 0
+	for _, ln := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "to = ") {
+			active++
+		} else if strings.HasPrefix(t, "#   to = ") {
+			todo++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "  %s: %d import block(s)", path, active)
+	if todo > 0 {
+		fmt.Fprintf(os.Stderr, ", %d need a manual id (REPLACE_ME)", todo)
+	}
+	fmt.Fprintln(os.Stderr)
+}
 
 func projectCmd() *cobra.Command {
 	var sf scanFlags
 	var pf prepareFlags
 	var from, out, zipPath, env string
+	var withImports bool
 
 	cmd := &cobra.Command{
 		Use:   "project",
@@ -26,11 +47,21 @@ func projectCmd() *cobra.Command {
 			}
 			defer eng.Close()
 
-			files, err := eng.GenerateProject(env)
+			files, err := eng.GenerateProject(env, withImports)
 			if err != nil {
 				return fmt.Errorf("project: %w", err)
 			}
-			return writeProject(out, zipPath, files)
+			if err := writeProject(out, zipPath, files); err != nil {
+				return err
+			}
+			if withImports {
+				for p, c := range files {
+					if strings.HasSuffix(p, "/imports.tf") {
+						reportImports(p, c)
+					}
+				}
+			}
+			return nil
 		},
 	}
 	sf.bind(cmd)
@@ -39,5 +70,6 @@ func projectCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output directory for the project tree")
 	cmd.Flags().StringVar(&zipPath, "zip", "", "also write the project as a zip archive")
 	cmd.Flags().StringVar(&env, "env", "dev", "environment / workspace name")
+	cmd.Flags().BoolVar(&withImports, "imports", false, "also emit workspaces/<env>/imports.tf with Terraform import blocks")
 	return cmd
 }

@@ -43,7 +43,7 @@ func Execute() {
 	pf.BoolVar(&flagQuiet, "quiet", false, "suppress progress and warnings")
 	pf.IntVar(&flagConcurrency, "concurrency", 32, "max concurrent AWS requests during a scan")
 
-	root.AddCommand(scanCmd(), generateCmd(), projectCmd(), allCmd())
+	root.AddCommand(scanCmd(), generateCmd(), projectCmd(), allCmd(), driftCmd(), adoptCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

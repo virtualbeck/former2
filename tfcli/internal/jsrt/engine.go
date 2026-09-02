@@ -116,7 +116,7 @@ func (e *Engine) bootstrap(vm *goja.Runtime) error {
 	}
 	sort.Strings(names)
 	files = append(files, names...)
-	files = append(files, "js/tfproject.js", "prelude-post.js")
+	files = append(files, "js/tfproject.js", "js/tfimports.js", "prelude-post.js")
 
 	for _, f := range files {
 		src, err := assets.ReadFile(f)
@@ -321,9 +321,10 @@ func (e *Engine) GenerateTf() (string, error) {
 	return fmt.Sprintf("%v", v), nil
 }
 
-// GenerateProject runs step 4 and returns a path -> content map.
-func (e *Engine) GenerateProject(env string) (map[string]string, error) {
-	v, err := e.callAsync("__generateProject", env)
+// GenerateProject runs step 4 and returns a path -> content map. When
+// withImports is set, an imports.tf with Terraform import blocks is included.
+func (e *Engine) GenerateProject(env string, withImports bool) (map[string]string, error) {
+	v, err := e.callAsync("__generateProject", env, withImports)
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +333,27 @@ func (e *Engine) GenerateProject(env string) (map[string]string, error) {
 		return nil, fmt.Errorf("decode project files: %w", err)
 	}
 	return files, nil
+}
+
+// ImportsResult is the flat (non-module) import-block output.
+type ImportsResult struct {
+	Content string   `json:"content"`
+	Count   int      `json:"count"`
+	Todo    []string `json:"todo"`
+}
+
+// GenerateImports returns Terraform import blocks for the flat layout
+// (addresses are <type>.<logicalId>). Prepare must have run.
+func (e *Engine) GenerateImports() (ImportsResult, error) {
+	var res ImportsResult
+	v, err := e.callAsync("__generateImports")
+	if err != nil {
+		return res, err
+	}
+	if err := json.Unmarshal([]byte(fmt.Sprintf("%v", v)), &res); err != nil {
+		return res, fmt.Errorf("decode imports: %w", err)
+	}
+	return res, nil
 }
 
 func toInt(v interface{}) int {

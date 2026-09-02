@@ -327,9 +327,11 @@ function generateTerraformProject(tracked_resources, options) {
         var block = outputMapTf(j, r.service, r.terraformType, r.options.tf, r.region, r.was_blocked, r.logicalId, tracked_resources);
         block = block.replace(/^\n+/, '').replace(/\s+$/, '') + '\n';
 
+        block = tfProjectRenameAttrs(block, r);
         block = tfProjectResolveValues(block, r, valueIndex, gs);
         block = tfProjectHoistScalars(block, r, gs);
         block = tfProjectRewriteRefs(block, r, group, groupOf, groups, crossRefs);
+        block = tfProjectUnwrapInterps(block);
 
         gs.blocks.push(block);
     }
@@ -362,6 +364,12 @@ function generateTerraformProject(tracked_resources, options) {
 
     files['README.md'] = tfProjectReadme(env, region, regionList, groupNames, tfResources.length, crossRefs.length, multiRegion);
 
+    // Optional: Terraform import blocks (adopt an existing account into state).
+    if (options.imports && typeof generateTerraformImports === 'function') {
+        var imp = generateTerraformImports(tracked_resources, { groupOf: groupOf });
+        files[wsDir + 'imports.tf'] = imp.content;
+    }
+
     files['.gitignore'] =
         '**/.terraform/*\n*.tfstate\n*.tfstate.*\ncrash.log\ncrash.*.log\n' +
         '*.tfvars\n*.tfvars.json\n!*.tfvars.example\noverride.tf\noverride.tf.json\n' +
@@ -371,6 +379,32 @@ function generateTerraformProject(tracked_resources, options) {
 }
 
 /* --- post-processing helpers ------------------------------------------------ */
+
+// former2's per-service mappers still emit a few attribute names from the AWS
+// provider 3.x era; the project scaffold targets `~> 5.0`. Rename the known
+// top-level offenders so the HCL at least parses. Extend as needed.
+var TF_PROJECT_ATTR_RENAMES = {
+    aws_db_instance:        { 'name': 'db_name' },
+    aws_elasticache_cluster: { 'availability_zones': 'preferred_availability_zones' }
+};
+
+function tfProjectRenameAttrs(block, r) {
+    var table = TF_PROJECT_ATTR_RENAMES[r.terraformType];
+    if (!table) { return block; }
+    return block.split('\n').map(function (line) {
+        var m = line.match(/^(\s+)([a-z0-9_]+)(\s*=.*)$/);
+        if (m && table[m[2]]) { return m[1] + table[m[2]] + m[3]; }
+        return line;
+    }).join('\n');
+}
+
+// Turn `attr = "${expr}"` (a value that is a single, whole interpolation) into
+// `attr = expr`. Leaves interpolations embedded in larger strings alone.
+function tfProjectUnwrapInterps(block) {
+    return block.replace(/"\$\{([^"{}]+)\}"/g, function (whole, expr) {
+        return (expr.indexOf('${') === -1) ? expr : whole;
+    });
+}
 
 // Replace `    <attr> = <literal>` on a top-level line with `var.<lid>_<attr>`,
 // and record the variable (with the discovered value as its default).

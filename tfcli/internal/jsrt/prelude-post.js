@@ -103,13 +103,22 @@ function __generateTf() {
     return out.tf;
 }
 
-function __generateProject(env) {
+function __generateProject(env, withImports) {
     // former2's UI always runs Generate (compileOutputs) before the project
     // build; that also initialises tracked_relationships / global_used_refs,
     // which tfproject.js's outputMapTf path relies on.
     compileOutputs(tracked_resources, null);
-    var files = generateTerraformProject(tracked_resources, { environment: env || "dev" });
+    var files = generateTerraformProject(tracked_resources, {
+        environment: env || "dev",
+        imports: !!withImports
+    });
     return JSON.stringify(files);
+}
+
+// Flat import blocks (addresses are <type>.<lid>, no modules).
+function __generateImports() {
+    var imp = generateTerraformImports(tracked_resources, {});
+    return JSON.stringify({ content: imp.content, count: imp.count, todo: imp.todo });
 }
 
 function __logicalIdMap() {

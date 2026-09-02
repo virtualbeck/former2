@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ func allCmd() *cobra.Command {
 	var sf scanFlags
 	var pf prepareFlags
 	var rawOut, tfOut, projectOut, zipPath, env string
+	var withImports bool
 
 	cmd := &cobra.Command{
 		Use:     "all",
@@ -76,11 +78,21 @@ func allCmd() *cobra.Command {
 			if projectOut == "" && zipPath == "" {
 				projectOut = "terraform-project"
 			}
-			files, err := eng.GenerateProject(env)
+			files, err := eng.GenerateProject(env, withImports)
 			if err != nil {
 				return fmt.Errorf("project: %w", err)
 			}
-			return writeProject(projectOut, zipPath, files)
+			if err := writeProject(projectOut, zipPath, files); err != nil {
+				return err
+			}
+			if withImports {
+				for p, c := range files {
+					if strings.HasSuffix(p, "/imports.tf") {
+						reportImports(p, c)
+					}
+				}
+			}
+			return nil
 		},
 	}
 	sf.bind(cmd)
@@ -90,5 +102,6 @@ func allCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&projectOut, "out", "o", "", "project tree output directory (default terraform-project)")
 	cmd.Flags().StringVar(&zipPath, "zip", "", "also write the project as a zip archive")
 	cmd.Flags().StringVar(&env, "env", "dev", "environment / workspace name")
+	cmd.Flags().BoolVar(&withImports, "imports", false, "also emit workspaces/<env>/imports.tf with Terraform import blocks")
 	return cmd
 }

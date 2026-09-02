@@ -52,12 +52,12 @@ func TestProjectCrossModuleWiring(t *testing.T) {
 	if _, err := e.Prepare(PrepareOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	files, err := e.GenerateProject("prod")
+	files, err := e.GenerateProject("prod", false)
 	if err != nil {
 		t.Fatalf("GenerateProject: %v", err)
 	}
 	sg := files["modules/security_groups/main.tf"]
-	if !strings.Contains(sg, "vpc_id = \"${var.network_EC2VPC_id}\"") {
+	if !strings.Contains(sg, "vpc_id = var.network_EC2VPC_id") {
 		t.Fatalf("SG vpc_id not wired to a module input:\n%s", sg)
 	}
 	net := files["modules/network/outputs.tf"]
@@ -67,6 +67,46 @@ func TestProjectCrossModuleWiring(t *testing.T) {
 	ws := files["workspaces/prod/main.tf"]
 	if !strings.Contains(ws, "network_EC2VPC_id = module.network.EC2VPC_id") {
 		t.Fatalf("workspace not wiring SG<-network:\n%s", ws)
+	}
+}
+
+func TestGenerateImports(t *testing.T) {
+	e := newTestEngine(t)
+	defer e.Close()
+
+	const rawIAM = `[{"f2id":"my-app-role","f2type":"iam.role","f2region":"us-east-1","f2data":{
+	  "RoleName":"my-app-role","RoleId":"AROA","Arn":"arn:aws:iam::123456789012:role/my-app-role","Path":"/",
+	  "AssumeRolePolicyDocument":"%7B%7D",
+	  "AttachedPolicies":[{"PolicyName":"S3RO","PolicyArn":"arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"}]}}]`
+
+	if _, err := e.LoadRaw([]byte(rawIAM)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Prepare(PrepareOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// flat
+	imp, err := e.GenerateImports()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imp.Count != 2 {
+		t.Fatalf("want 2 import blocks, got %d\n%s", imp.Count, imp.Content)
+	}
+	if !strings.Contains(imp.Content, `to = aws_iam_role.IAMRole`) ||
+		!strings.Contains(imp.Content, `id = "my-app-role/arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"`) {
+		t.Fatalf("flat imports wrong:\n%s", imp.Content)
+	}
+
+	// project layout: addresses must be module-qualified
+	files, err := e.GenerateProject("prod", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := files["workspaces/prod/imports.tf"]
+	if !strings.Contains(it, "to = module.iam.aws_iam_role.IAMRole") {
+		t.Fatalf("project imports not module-qualified:\n%s", it)
 	}
 }
 
@@ -96,7 +136,7 @@ func TestGeneratePipelineOffline(t *testing.T) {
 	}
 	t.Logf("flat tf:\n%s", tf)
 
-	files, err := e.GenerateProject("dev")
+	files, err := e.GenerateProject("dev", false)
 	if err != nil {
 		t.Fatalf("GenerateProject: %v", err)
 	}

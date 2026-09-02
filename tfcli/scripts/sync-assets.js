@@ -25,7 +25,7 @@ for (const d of [jsOut, svcOut, apiOut]) {
 }
 
 // --- 1. copy the JS corpus -------------------------------------------------
-const topJs = ['deepmerge.js', 'mappings.js', 'datatables.js', 'tfproject.js'];
+const topJs = ['deepmerge.js', 'mappings.js', 'datatables.js', 'tfproject.js', 'tfimports.js'];
 for (const f of topJs) {
     fs.copyFileSync(path.join(jsSrc, f), path.join(jsOut, f));
 }

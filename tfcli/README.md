@@ -42,6 +42,8 @@ The three steps are independent and each can start from a saved raw-data file:
 | `generate` | 3 | `--from raw.json` **or** a fresh scan | one flat `.tf` file |
 | `project` | 4 | `--from raw.json` **or** a fresh scan | `modules/` + `workspaces/` tree |
 | `all` | 1 → 3 → 4 | live AWS account | raw + flat + project, one scan |
+| `adopt` | 1 → 4 → tofu | live AWS account (or `--from`) | import-primed repo + drift report |
+| `drift` | — | a tofu plan / a workspace dir | grouped summary of what's not yet `no-op` |
 
 ### scan
 
@@ -89,6 +91,56 @@ former2-tf all --region us-east-1 --out ./infra --raw-out raw.json --tf-out flat
 Scans once, keeps the result in memory, then runs generate (if `--tf-out`) and
 project.
 
+## Adopting a console-built account
+
+Goal: start from an account built entirely in the console, end with an
+opinionated, formatted Terraform/OpenTofu repo whose `tofu plan` reports **no
+changes** — a "continue only via IaC" baseline.
+
+```sh
+# one shot: scan -> modules/workspaces repo + import blocks -> fmt -> validate -> plan -> drift
+former2-tf adopt --profile myprofile --region us-east-1 --out infra --env prod
+```
+
+`adopt` writes `infra/` (see `project` above) plus
+`infra/workspaces/prod/imports.tf` — a Terraform `import {}` block per
+discovered resource, addressed at `module.<group>.<type>.<name>`. It then runs
+`tofu fmt`, `init`, `validate` and `plan` and prints a drift report. It does
+**not** apply anything.
+
+Then iterate:
+
+```sh
+cd infra/workspaces/prod
+tofu apply                       # consumes imports.tf -> state is populated
+former2-tf drift --dir .         # what still isn't `no-op`?
+```
+
+`drift` groups the plan:
+
+- **create** — the resource exists in AWS but isn't in state → its import block
+  is missing or has the wrong id. Fix `imports.tf`, re-apply.
+- **update** — the generated HCL disagrees with AWS on the listed attributes →
+  edit them, or add `lifecycle { ignore_changes = [...] }` for values you can't
+  manage from code.
+- **delete** — in state but not in config → usually a stale import block.
+
+Repeat until `former2-tf drift` prints `✓ clean`. Then delete the `imports.tf`
+files (they're inert after apply), commit, and enforce IaC-only from there.
+
+```sh
+former2-tf drift --plan-json plan.json    # also accepts a `tofu show -json` file or a `tofu plan -json` stream on stdin
+```
+
+Import-id notes: for most resource types the import id is the physical id
+former2 discovered (`vpc-…`, bucket name, ARN, …). Composite ids
+(`<role>/<policy_arn>`, `<rtb>_<cidr>`, route53 `<zone>_<name>_<type>`, …) are
+computed. Types with no automatic id are emitted as commented blocks marked
+`REPLACE_ME`; `adopt`/`project --imports` report how many.
+
+`project --imports` and `generate --imports` produce the same blocks without
+running tofu.
+
 ## Common flags
 
 ```
@@ -105,8 +157,8 @@ Use read-only credentials (`ReadOnlyAccess`).
 ## Updating the embedded former2 corpus
 
 The JS files and API models under `internal/*/` are build inputs copied from the
-parent repo. After changing `js/services/*.js`, `js/mappings.js` or
-`js/tfproject.js`, re-sync and rebuild:
+parent repo. After changing `js/services/*.js`, `js/mappings.js`,
+`js/tfproject.js` or `js/tfimports.js`, re-sync and rebuild:
 
 ```sh
 node tfcli/scripts/sync-assets.js
@@ -133,6 +185,15 @@ JS (unchanged former2): sections[] + updateDatatable*  (scan)
 ## Limitations
 
 - `scan` needs live AWS access; `generate` / `project` from `--from` do not.
+- `adopt` / `drift --dir` need `tofu` (or `terraform`) on PATH; `drift
+  --plan-json` / stdin do not.
+- Reaching `plan` = no changes is iterative — former2's per-resource mappers
+  omit some attributes and still emit a few AWS-provider-3.x names (the project
+  scaffold fixes the common ones, e.g. `aws_db_instance.name` -> `db_name`).
+  The `drift` loop is how you close the gap.
+- Import blocks are placed in `workspaces/<env>/imports.tf` with fully-qualified
+  `module.<group>.…` addresses (module-local import blocks aren't portable
+  across tofu/terraform versions).
 - Inherits former2's emitter limitation: repeated nested blocks (some SG rules,
   WAF statements, S3 lifecycle transitions) render as list literals.
 - The generic AWS client implements what read-only discovery needs. A service
