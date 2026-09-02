@@ -16,11 +16,21 @@ Nothing but Terraform is emitted (no CloudFormation / CDK / Pulumi / diagrams).
 
 ```sh
 cd tfcli
-go build -o former2-tf .
+make build          # native static binary -> bin/former2-tf
+make dist           # cross-compile -> dist/former2-tf_<version>_<os>_<arch>
+make test
 ```
 
-The binary embeds everything it needs (JS corpus + a subset of the aws-sdk-js
-API models). No Node.js at runtime.
+`make dist` builds for Apple Silicon and Linux x86-64 by default; override with
+`make dist PLATFORMS="darwin/arm64 darwin/amd64 linux/amd64 linux/arm64"`.
+Go is taken from `$PATH` — override with `make GO=/path/to/go ...`.
+
+Plain `go build -o former2-tf .` also works (without the embedded version
+string). The binary is a fully static ELF/Mach-O: it embeds the JS corpus and
+the aws-sdk-js API models, and needs no Node.js, libc, or this repo at runtime —
+copy the single file to any same-arch host with AWS credentials.
+
+`former2-tf --version` reports the build tag, commit and date.
 
 ## Commands
 

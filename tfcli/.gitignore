@@ -1,4 +1,5 @@
 /former2-tf
 /former2-tf.exe
-*.test
+/bin/
 /dist/
+*.test

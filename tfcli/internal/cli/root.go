@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/virtualbeck/former2/tfcli/internal/awsclient"
 	"github.com/virtualbeck/former2/tfcli/internal/jsrt"
+	"github.com/virtualbeck/former2/tfcli/internal/version"
 )
 
 var (
@@ -30,9 +31,11 @@ func Execute() {
 	root := &cobra.Command{
 		Use:           "former2-tf",
 		Short:         "Generate Terraform from existing AWS resources (former2, Terraform-only)",
+		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("former2-tf {{.Version}}\n")
 	pf := root.PersistentFlags()
 	pf.StringVar(&flagRegion, "region", "", "AWS region to scan (default: from profile/env, then us-east-1)")
 	pf.StringVar(&flagProfile, "profile", "", "shared-config profile to use")
