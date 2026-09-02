@@ -1,0 +1,3 @@
+# Synced build inputs - see scripts/sync-assets.js
+internal/awsmodel/apis/** linguist-vendored -diff
+internal/jsrt/js/** linguist-vendored -diff
