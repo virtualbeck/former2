@@ -67,6 +67,12 @@ func newEngine(ctx context.Context) (*jsrt.Engine, string, *consoleLogger, error
 		region = "us-east-1"
 	}
 
+	// fail fast if there are no usable credentials at all
+	if _, err := cfg.Credentials.Retrieve(ctx); err != nil {
+		return nil, "", nil, fmt.Errorf("no AWS credentials: %w\n"+
+			"configure a profile/env, or use `generate --from raw.json` / `project --from raw.json`", err)
+	}
+
 	client := awsclient.New(cfg.Credentials, region)
 	log := newConsoleLogger(flagDebug, flagQuiet)
 	eng, err := jsrt.New(client, region, log, flagDebug, flagConcurrency)
