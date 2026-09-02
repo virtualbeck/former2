@@ -16,8 +16,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -150,6 +152,17 @@ func (c *Client) Call(ctx context.Context, sdkClass, method string, params map[s
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		// A "no such host" DNS failure means AWS does not run this service in
+		// this region (there is simply no <prefix>.<region>.amazonaws.com).
+		// former2's scanner already swallows err.code == "NetworkingError"
+		// quietly, so map it there instead of surfacing 40 identical warnings.
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, &APIError{
+				Code:    "NetworkingError",
+				Message: fmt.Sprintf("%s is not available in %s (no endpoint)", signingName, signRegion),
+			}
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()

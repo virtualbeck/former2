@@ -120,3 +120,28 @@ func TestCallEndToEndSigned(t *testing.T) {
 	}
 	_ = aws.Credentials{}
 }
+
+// A service with no endpoint in the target region resolves to a nonexistent
+// host; that must come back as code "NetworkingError" so former2's scanner
+// skips it quietly instead of printing a wall of identical DNS warnings.
+func TestUnresolvableEndpointIsNetworkingError(t *testing.T) {
+	c := New(credentials.NewStaticCredentialsProvider("AKID", "SECRET", ""), "us-west-1")
+	c.baseOverride = "https://groundstation.us-west-1.does-not-resolve.invalid"
+
+	_, err := c.Call(context.Background(), "GroundStation", "listConfigs", nil, nil)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var apiErr *APIError
+	if !asAPIErrorForTest(err, &apiErr) || apiErr.Code != "NetworkingError" {
+		t.Fatalf("want NetworkingError APIError, got %#v", err)
+	}
+}
+
+func asAPIErrorForTest(err error, target **APIError) bool {
+	if ae, ok := err.(*APIError); ok {
+		*target = ae
+		return true
+	}
+	return false
+}
