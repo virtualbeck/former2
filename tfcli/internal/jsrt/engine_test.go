@@ -157,6 +157,72 @@ func TestGeneratePipelineOffline(t *testing.T) {
 	}
 }
 
+// former2's mappers emitted HCL the AWS provider v5 rejects at `tofu validate`.
+// Each case here is one class of that.
+func TestProviderV5Hcl(t *testing.T) {
+	e := newTestEngine(t)
+	defer e.Close()
+
+	const raw = `[
+	 {"f2id":"al","f2type":"cloudwatch.alarm","f2region":"us-east-1","f2data":{"AlarmName":"a","AlarmArn":"arn:aws:cloudwatch:us-east-1:1:alarm:a","EvaluationPeriods":1,"Threshold":1,"ComparisonOperator":"GreaterThanThreshold","Dimensions":[{"Name":"InstanceId","Value":"i-1"}],"Metrics":[{"Id":"m1","MetricStat":{"Metric":{"MetricName":"N","Namespace":"NS","Dimensions":[{"Name":"D","Value":"v"}]},"Period":60,"Stat":"Sum"}}]}},
+	 {"f2id":"as","f2type":"ssm.association","f2region":"us-east-1","f2data":{"Name":"AWS-Run","Parameters":{"Op":["Install"]}}},
+	 {"f2id":"er","f2type":"eventbridge.rule","f2region":"us-east-1","f2data":{"Name":"r","Arn":"arn:aws:events:us-east-1:1:rule/r","EventPattern":"{}","Targets":[{"Id":"t","Arn":"arn:aws:lambda:us-east-1:1:function:f","InputTransformer":{"InputPathsMap":{"i":"$.d"},"InputTemplate":"\"x\""}}]}},
+	 {"f2id":"b","f2type":"s3.bucket","f2region":"us-east-1","f2data":{"Name":"b","Tags":[{"Key":"k:1","Value":"v"}]}},
+	 {"f2id":"ip","f2type":"iam.instanceprofile","f2region":"us-east-1","f2data":{"InstanceProfileName":"p","Path":"/","Roles":[{"Arn":"arn:aws:iam::1:role/r","RoleName":"r"}]}},
+	 {"f2id":"bp","f2type":"backup.backupplan","f2region":"us-east-1","f2data":{"BackupPlanId":"x","BackupPlan":{"BackupPlanName":"n","Rules":[{"RuleName":"aws/efs/automatic-backup-rule","TargetBackupVaultName":"aws/efs/vault","ScheduleExpression":"cron(0 5 * * ? *)"}]}}},
+	 {"f2id":"lr","f2type":"elbv2.loadbalancerlistenerrule","f2region":"us-east-1","f2data":{"RuleArn":"arn:aws:elasticloadbalancing:us-east-1:1:listener-rule/app/x/1/2/3","Priority":"1","ListenerArn":"arn:aws:elasticloadbalancing:us-east-1:1:listener/app/x/1/2","Conditions":[{"Field":"path-pattern","PathPatternConfig":{"Values":["/a/*"]}}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/t/a","ForwardConfig":{"TargetGroups":[{"TargetGroupArn":"arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/t/a","Weight":1}],"TargetGroupStickinessConfig":{"Enabled":false}}}]}},
+	 {"f2id":"acl","f2type":"waf.v2webacl","f2region":"us-east-1","f2data":{"Name":"w","Id":"i","ARN":"arn:aws:wafv2:us-east-1:1:regional/webacl/w/i","Scope":"REGIONAL","DefaultAction":{"Allow":{}},"VisibilityConfig":{"SampledRequestsEnabled":true,"CloudWatchMetricsEnabled":true,"MetricName":"w"},"Rules":[{"Name":"r","Priority":1,"Action":{"Block":{}},"VisibilityConfig":{"SampledRequestsEnabled":true,"CloudWatchMetricsEnabled":true,"MetricName":"r"},"Statement":{"ByteMatchStatement":{"SearchString":"x","FieldToMatch":{"SingleHeader":{"Name":"ua"}},"TextTransformations":[{"Priority":0,"Type":"NONE"}],"PositionalConstraint":"CONTAINS"}}}]}}
+	]`
+	if _, err := e.LoadRaw([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Prepare(PrepareOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tf, err := e.GenerateTf()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// GenerateTf output is not run through `tofu fmt`, so exact substrings hold.
+	must := []string{
+		"dimensions = {",                    // 1 metric alarm
+		"parameters = {",                    // 2 ssm association
+		"input_paths = {",                   // 3 event target
+		"tags = {",                          // 4 s3 bucket
+		`"k:1" = "v"`,                       // 4 non-ident tag key stays quoted
+		"cloudwatch_metrics_enabled = true", // 5 wafv2 rename
+		`role = "r"`,                        // 6 instance profile single role
+		`rule_name = "aws_efs_automatic-backup-rule"`, // 8d backup sanitised
+		`target_vault_name = "aws_efs_vault"`,         // 8d
+		"target_group {",                              // 7 lb rule repeatable block
+		"text_transformation {",                       // 8a wafv2 repeatable block
+		"metric {",                                    // 8c metric_query nested metric block
+		"metric_name = \"N\"",                         // 8c mapped, not raw MetricName
+	}
+	forbidden := []string{
+		"dimensions {",
+		"parameters {",
+		"input_paths {",
+		"cloud_watch_metrics_enabled",
+		"roles = [",
+		"target_group = [",
+		"text_transformation = [",
+		"Metric {", // raw PascalCase MetricStat leaking through
+		"Period =",
+	}
+	for _, s := range must {
+		if !strings.Contains(tf, s) {
+			t.Errorf("expected %q in output:\n%s", s, tf)
+		}
+	}
+	for _, s := range forbidden {
+		if strings.Contains(tf, s) {
+			t.Errorf("did not expect %q in output:\n%s", s, tf)
+		}
+	}
+}
+
 // An aws_s3_bucket and its aws_s3_bucket_* satellites all carry the bucket
 // name as their Terraform id. former2 must not turn that into a two-way
 // reference (bucket -> encryption config -> bucket), which `tofu validate`
