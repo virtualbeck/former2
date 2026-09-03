@@ -1210,11 +1210,14 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.tf['name'] = obj.data.InstanceProfileName;
         if (obj.data.Roles) {
             reqParams.cfn['Roles'] = [];
-            reqParams.tf['roles'] = [];
             obj.data.Roles.forEach(role => {
                 reqParams.cfn['Roles'].push(role.Arn.split(":role/")[1]);
-                reqParams.tf['roles'].push(role.Arn.split(":role/")[1]);
             });
+            // aws_iam_instance_profile takes a single `role` (v4+), not `roles`;
+            // an instance profile can only hold one role anyway.
+            if (obj.data.Roles[0]) {
+                reqParams.tf['role'] = obj.data.Roles[0].Arn.split(":role/")[1];
+            }
         }
 
         tracked_resources.push({

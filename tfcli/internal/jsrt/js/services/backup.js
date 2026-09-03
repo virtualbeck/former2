@@ -2,6 +2,13 @@
 // Backup
 /* ========================================================================== */
 
+// aws_backup_plan rule_name allows [A-Za-z0-9_.-]; target_vault_name allows
+// [A-Za-z0-9_-]. Replace anything else (AWS-managed plans use '/').
+function backupSanitizeName(s, allowDot) {
+    if (typeof s !== 'string') { return s; }
+    return s.replace(allowDot ? /[^A-Za-z0-9_.-]/g : /[^A-Za-z0-9_-]/g, '_');
+}
+
 sections.push({
     'category': 'Storage',
     'service': 'Backup',
@@ -393,10 +400,12 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                     'completion_window': rule.CompletionWindowMinutes,
                     'lifecycle': tfLifecycle,
                     'recovery_point_tags': rule.RecoveryPointTags,
-                    'rule_name': rule.RuleName,
+                    // AWS-managed plans (e.g. "aws/efs/automatic-backup-rule")
+                    // carry '/' which the provider's validators reject.
+                    'rule_name': backupSanitizeName(rule.RuleName, true),
                     'schedule': rule.ScheduleExpression,
                     'start_window': rule.StartWindowMinutes,
-                    'target_vault_name': rule.TargetBackupVaultName,
+                    'target_vault_name': backupSanitizeName(rule.TargetBackupVaultName, false),
                 });
             });
         }

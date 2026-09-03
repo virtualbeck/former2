@@ -3717,9 +3717,10 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                     if (action.ForwardConfig) {
                         var targetgroups = null;
                         if (action.ForwardConfig.TargetGroups) {
-                            targetgroups = [];
+                            // target_group is a repeatable block, not a list attr
+                            targetgroups = new Set();
                             action.ForwardConfig.TargetGroups.forEach(targetgroup => {
-                                targetgroups.push({
+                                targetgroups.add({
                                     'arn': targetgroup.TargetGroupArn,
                                     'weight': targetgroup.Weight
                                 });
@@ -3727,9 +3728,12 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                         }
                         var targetgroupstickinessconfig = null;
                         if (action.ForwardConfig.TargetGroupStickinessConfig) {
+                            var sc = action.ForwardConfig.TargetGroupStickinessConfig;
                             targetgroupstickinessconfig = {
-                                'duration': action.ForwardConfig.TargetGroupStickinessConfig.DurationSeconds,
-                                'enabled': action.ForwardConfig.TargetGroupStickinessConfig.Enabled
+                                // both are required by the provider; AWS omits
+                                // DurationSeconds when stickiness is disabled
+                                'duration': sc.DurationSeconds || 1,
+                                'enabled': sc.Enabled || false
                             };
                         }
                         forward = {
@@ -3787,7 +3791,8 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                     }
                     reqParams.tf['action'].push({
                         'type': action.Type,
-                        'target_group_arn': action.TargetGroupArn,
+                        // provider rejects target_group_arn together with forward
+                        'target_group_arn': forward ? undefined : action.TargetGroupArn,
                         'forward': forward,
                         'redirect': redirect,
                         'fixed_response': fixedresponse,
