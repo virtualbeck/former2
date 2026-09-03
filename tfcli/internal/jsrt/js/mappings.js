@@ -210,6 +210,9 @@ function processTfParameter(param, spacing, keyname, index, tracked_resources) {
             if (typeof subvalue !== "undefined") {
                 if (param.get(key) instanceof Set) {
                     paramitems.push(subvalue);
+                } else if (param.get(key) instanceof Map) {
+                    // a nested Map is a map-typed argument, not a block
+                    paramitems.push(tfHclKey(key) + " = " + subvalue);
                 } else if (subvalue[0] == '{') {
                     paramitems.push(key + " " + subvalue);
                 } else {
@@ -247,6 +250,9 @@ function processTfParameter(param, spacing, keyname, index, tracked_resources) {
             if (typeof subvalue !== "undefined") {
                 if (param[key] instanceof Set) {
                     paramitems.push(subvalue);
+                } else if (param[key] instanceof Map) {
+                    // a nested Map is a map-typed argument, not a block
+                    paramitems.push(tfHclKey(key) + " = " + subvalue);
                 } else if (subvalue[0] == '{') {
                     paramitems.push(key + " " + subvalue);
                 } else {

@@ -1422,9 +1422,10 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.tf['extended_statistic'] = obj.data.ExtendedStatistic;
         reqParams.cfn['Dimensions'] = obj.data.Dimensions;
         if (obj.data.Dimensions) {
-            reqParams.tf['dimensions'] = {};
+            // aws_cloudwatch_metric_alarm.dimensions is map(string), not a block
+            reqParams.tf['dimensions'] = new Map();
             obj.data.Dimensions.forEach(dimension => {
-                reqParams.tf['dimensions'][dimension.Name] = dimension.Value;
+                reqParams.tf['dimensions'].set(dimension.Name, dimension.Value);
             });
         }
         reqParams.cfn['Period'] = obj.data.Period;
@@ -1448,11 +1449,16 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
             reqParams.tf['metric_query'] = [];
             obj.data.Metrics.forEach(metric => {
                 metricstat = null;
-                if (metric.MetricStat) {
+                if (metric.MetricStat && metric.MetricStat.Metric) {
+                    var mdims = null;
+                    if (metric.MetricStat.Metric.Dimensions) {
+                        mdims = new Map();
+                        metric.MetricStat.Metric.Dimensions.forEach(d => mdims.set(d.Name, d.Value));
+                    }
                     metricstat = {
                         'metric_name': metric.MetricStat.Metric.MetricName,
                         'namespace': metric.MetricStat.Metric.Namespace,
-                        'dimensions': metric.MetricStat.Metric.Dimensions,
+                        'dimensions': mdims,
                         'period': metric.MetricStat.Period,
                         'stat': metric.MetricStat.Stat,
                         'unit': metric.MetricStat.Unit
@@ -1462,7 +1468,7 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                     'expression': metric.Expression,
                     'id': metric.Id,
                     'label': metric.Label,
-                    'metric': metric.MetricStat,
+                    'metric': metricstat,
                     'return_data': metric.ReturnData
                 });
             });

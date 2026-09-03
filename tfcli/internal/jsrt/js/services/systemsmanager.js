@@ -799,7 +799,15 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         reqParams.cfn['DocumentVersion'] = obj.data.DocumentVersion;
         reqParams.tf['document_version'] = obj.data.DocumentVersion;
         reqParams.cfn['Parameters'] = obj.data.Parameters;
-        reqParams.tf['parameters'] = obj.data.Parameters;
+        if (obj.data.Parameters) {
+            // aws_ssm_association.parameters is map(string); AWS returns
+            // map(list(string)) - collapse each value.
+            reqParams.tf['parameters'] = new Map();
+            Object.keys(obj.data.Parameters).forEach(function (k) {
+                var v = obj.data.Parameters[k];
+                reqParams.tf['parameters'].set(k, Array.isArray(v) ? v.join(',') : v);
+            });
+        }
         reqParams.cfn['ScheduleExpression'] = obj.data.ScheduleExpression;
         reqParams.tf['schedule_expression'] = obj.data.ScheduleExpression;
         if (obj.data.OutputLocation && obj.data.OutputLocation.S3Location) {
