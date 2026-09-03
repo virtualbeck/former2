@@ -209,14 +209,18 @@ JS (unchanged former2): sections[] + updateDatatable*  (scan)
 - `adopt` / `drift --dir` need `tofu` (or `terraform`) on PATH; `drift
   --plan-json` / stdin do not.
 - Reaching `plan` = no changes is iterative — former2's per-resource mappers
-  omit some attributes and still emit a few AWS-provider-3.x names (the project
-  scaffold fixes the common ones, e.g. `aws_db_instance.name` -> `db_name`).
-  The `drift` loop is how you close the gap.
+  omit some attributes. The corpus and project scaffold fix the known
+  provider-v5 mismatches (map args vs blocks for `tags` / `dimensions` /
+  `parameters` / `input_paths`, `aws_db_instance.name` -> `db_name`,
+  `aws_iam_instance_profile` `roles` -> `role`, wafv2 `cloudwatch_metrics_enabled`,
+  `aws_lb_listener_rule` forward blocks, metric-query nesting, backup-plan
+  name sanitising, ...); the `drift` loop is how you close whatever remains.
 - Import blocks are placed in `workspaces/<env>/imports.tf` with fully-qualified
   `module.<group>.…` addresses (module-local import blocks aren't portable
   across tofu/terraform versions).
-- Inherits former2's emitter limitation: repeated nested blocks (some SG rules,
-  WAF statements, S3 lifecycle transitions) render as list literals.
+- Inherits former2's emitter limitation: some repeated nested blocks (a few
+  SG rules, S3 lifecycle transitions) still render as list literals. wafv2
+  statements and `aws_lb_listener_rule` forward target groups are fixed.
 - The generic AWS client implements what read-only discovery needs. A service
   whose discovery uses an unusual request shape may return nothing; run with
   `--debug` to see which `updateDatatable*` calls failed.
