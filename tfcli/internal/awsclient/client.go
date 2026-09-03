@@ -16,8 +16,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -129,7 +131,19 @@ func (c *Client) Call(ctx context.Context, sdkClass, method string, params map[s
 	if err != nil {
 		return nil, fmt.Errorf("credentials: %w", err)
 	}
-	if err := c.signer.SignHTTP(ctx, creds, req, payloadHash, signingName, signRegion, time.Now()); err != nil {
+	// S3 (and a few other services) reject a SigV4 request that omits the
+	// X-Amz-Content-Sha256 header. This signer build never adds it on its own,
+	// so set it explicitly before signing (it then lands in SignedHeaders).
+	// Harmless for every other service.
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	var signOpts []func(*v4.SignerOptions)
+	if sdkClass == "S3" {
+		// S3 keys can contain otherwise-reserved characters; its canonical
+		// request must use the raw, un-re-escaped path.
+		signOpts = append(signOpts, func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
+	}
+	if err := c.signer.SignHTTP(ctx, creds, req, payloadHash, signingName, signRegion, time.Now(), signOpts...); err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 	if bodyBytes != nil {
@@ -138,6 +152,17 @@ func (c *Client) Call(ctx context.Context, sdkClass, method string, params map[s
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		// A "no such host" DNS failure means AWS does not run this service in
+		// this region (there is simply no <prefix>.<region>.amazonaws.com).
+		// former2's scanner already swallows err.code == "NetworkingError"
+		// quietly, so map it there instead of surfacing 40 identical warnings.
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, &APIError{
+				Code:    "NetworkingError",
+				Message: fmt.Sprintf("%s is not available in %s (no endpoint)", signingName, signRegion),
+			}
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()

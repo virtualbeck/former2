@@ -158,12 +158,19 @@ independently, producing the same files without running tofu.
 ## Common flags
 
 ```
---region        AWS region to scan (default: profile/env, then us-east-1)
---profile       shared-config profile
---concurrency   max concurrent AWS requests during a scan (default 32)
---debug         verbose diagnostics
---quiet         suppress progress + warnings
+--region          AWS region to scan (default: profile/env, then us-east-1)
+--all-us-regions  scan us-east-1, us-east-2, us-west-1, us-west-2 and merge
+                  (overrides --region; global resources are de-duplicated)
+--profile         shared-config profile
+--concurrency     max concurrent AWS requests during a scan (default 32)
+--debug           verbose diagnostics
+--quiet           suppress progress + warnings
 ```
+
+With `--all-us-regions`, the generated project points its default `aws`
+provider at us-east-1 and adds an aliased `provider "aws"` for each other
+region; resources outside us-east-1 get `provider = aws.<region>` and their
+module declares the matching `configuration_aliases`.
 
 Credentials come from the standard AWS chain (env, shared config, SSO, IMDS).
 Use read-only credentials (`ReadOnlyAccess`).

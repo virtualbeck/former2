@@ -82,10 +82,11 @@ func TestBuildQueryForm(t *testing.T) {
 }
 
 func TestCallEndToEndSigned(t *testing.T) {
-	var gotAuth, gotTarget string
+	var gotAuth, gotTarget, gotSha string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotTarget = r.Header.Get("X-Amz-Target")
+		gotSha = r.Header.Get("X-Amz-Content-Sha256")
 		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
 		io.WriteString(w, `{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/1/a"]}`)
 	}))
@@ -105,8 +106,42 @@ func TestCallEndToEndSigned(t *testing.T) {
 	if gotTarget != "AmazonSQS.ListQueues" {
 		t.Fatalf("target = %q", gotTarget)
 	}
+	// S3 rejects requests without this header; it must be the body hash.
+	// (SQS ListQueues marshals an empty JSON object body.)
+	const emptyObjSha = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+	if gotSha != emptyObjSha {
+		t.Fatalf("x-amz-content-sha256 = %q", gotSha)
+	}
+	if !strings.Contains(gotAuth, "x-amz-content-sha256") {
+		t.Fatalf("content-sha256 not in SignedHeaders: %q", gotAuth)
+	}
 	if urls, ok := out["QueueUrls"].([]interface{}); !ok || len(urls) != 1 {
 		t.Fatalf("out = %#v", out)
 	}
 	_ = aws.Credentials{}
+}
+
+// A service with no endpoint in the target region resolves to a nonexistent
+// host; that must come back as code "NetworkingError" so former2's scanner
+// skips it quietly instead of printing a wall of identical DNS warnings.
+func TestUnresolvableEndpointIsNetworkingError(t *testing.T) {
+	c := New(credentials.NewStaticCredentialsProvider("AKID", "SECRET", ""), "us-west-1")
+	c.baseOverride = "https://groundstation.us-west-1.does-not-resolve.invalid"
+
+	_, err := c.Call(context.Background(), "GroundStation", "listConfigs", nil, nil)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var apiErr *APIError
+	if !asAPIErrorForTest(err, &apiErr) || apiErr.Code != "NetworkingError" {
+		t.Fatalf("want NetworkingError APIError, got %#v", err)
+	}
+}
+
+func asAPIErrorForTest(err error, target **APIError) bool {
+	if ae, ok := err.(*APIError); ok {
+		*target = ae
+		return true
+	}
+	return false
 }

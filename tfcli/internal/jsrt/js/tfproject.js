@@ -37,6 +37,24 @@
 
 var TF_PROJECT_DEFAULT_ENV = 'dev';
 
+// The region the workspace's default `aws` provider points at. Set at the top
+// of generateTerraformProject(); resources in any other region get an aliased
+// provider. Consulted by tfProjectResolveValues() so it only collapses a
+// region literal to data.aws_region.current.id when that lookup would resolve
+// to the same region.
+var _tfProjectPrimaryRegion = null;
+
+// region -> provider alias ("" for the primary region's default provider),
+// e.g. "us-west-2" -> "us_west_2". Set at the top of generateTerraformProject().
+var _tfProjectAliasOf = {};
+
+// Prepend `provider = aws.<alias>` as the first line inside a resource block.
+function tfProjectInjectProvider(block, alias) {
+    return block.replace(
+        /^(resource\s+"[^"]+"\s+"[^"]+"\s*\{[ \t]*\n)/,
+        '$1    provider = aws.' + alias + '\n');
+}
+
 // terraformType -> module group. First match wins; specific patterns first.
 var TF_PROJECT_GROUPS = [
     [/^aws_(vpc($|_|peering)|subnet|route($|_)|route_table|internet_gateway|egress_only_internet_gateway|nat_gateway|network_acl|network_interface|default_(vpc|subnet|route_table|network_acl)|ec2_transit_gateway|customer_gateway|vpn_|dx_|flow_log|ec2_managed_prefix_list|main_route_table_association)/, 'network'],
@@ -229,8 +247,11 @@ function tfProjectResolveValues(block, r, valueIndex, gs) {
 
         var looksAws = /^arn:aws|amazonaws\.com|\.elb\.|\.rds\.|\.cache\./.test(text);
 
-        // 2. region token inside an ARN / endpoint
-        if (looksAws && region) {
+        // 2. region token inside an ARN / endpoint. Only fold it to
+        // data.aws_region.current.id for resources on the module's default
+        // provider - for an aliased (out-of-region) resource that lookup would
+        // resolve to the wrong region, so keep the literal there.
+        if (looksAws && region && (!_tfProjectPrimaryRegion || region === _tfProjectPrimaryRegion)) {
             var rre = new RegExp('(^|[.:\\-])' + tfProjectReEsc(region) + '(?=[.:\\-]|$)', 'g');
             if (rre.test(text)) {
                 text = text.replace(new RegExp('(^|[.:\\-])' + tfProjectReEsc(region) + '(?=[.:\\-]|$)', 'g'),
@@ -287,9 +308,18 @@ function generateTerraformProject(tracked_resources, options) {
     for (var i = 0; i < tfResources.length; i++) {
         if (tfResources[i].region) { regions[tfResources[i].region] = 1; }
     }
-    var regionList = Object.keys(regions);
-    var region = regionList[0] || 'us-east-1';
+    var regionList = Object.keys(regions).sort();
+    // Default provider points at us-east-1 when present (former2 scans global
+    // resources there), otherwise the lowest-sorted region.
+    var region = regionList.indexOf('us-east-1') !== -1 ? 'us-east-1' : (regionList[0] || 'us-east-1');
     var multiRegion = regionList.length > 1;
+
+    _tfProjectPrimaryRegion = region;
+    _tfProjectAliasOf = {};
+    regionList.forEach(function (rg) {
+        _tfProjectAliasOf[rg] = (rg === region) ? '' : tfProjectSanitize(rg);
+    });
+    var aliasList = regionList.filter(function (rg) { return rg !== region; });
 
     // logicalId -> group, so cross-module references can be detected.
     var groupOf = {};
@@ -333,6 +363,13 @@ function generateTerraformProject(tracked_resources, options) {
         block = tfProjectRewriteRefs(block, r, group, groupOf, groups, crossRefs);
         block = tfProjectUnwrapInterps(block);
 
+        var alias = r.region ? _tfProjectAliasOf[r.region] : '';
+        if (alias) {
+            block = tfProjectInjectProvider(block, alias);
+            if (!gs.aliases) { gs.aliases = {}; }
+            gs.aliases[alias] = 1;
+        }
+
         gs.blocks.push(block);
     }
 
@@ -348,6 +385,12 @@ function generateTerraformProject(tracked_resources, options) {
 
         files['modules/' + name + '/variables.tf'] = tfProjectRenderVariables(gs.vars);
 
+        // A module holding out-of-region resources must declare the provider
+        // aliases it expects; the workspace root passes them in (main.tf).
+        if (gs.aliases && Object.keys(gs.aliases).length) {
+            files['modules/' + name + '/providers.tf'] = tfProjectModuleProvidersFile(Object.keys(gs.aliases).sort());
+        }
+
         var outNames = Object.keys(gs.outputs).sort();
         if (outNames.length) {
             files['modules/' + name + '/outputs.tf'] = outNames.map(function (o) {
@@ -358,7 +401,7 @@ function generateTerraformProject(tracked_resources, options) {
 
     // Single workspace: one root module for this environment / AWS account.
     var wsDir = 'workspaces/' + env + '/';
-    files[wsDir + 'provider.tf'] = tfProjectProviderFile(region, env, multiRegion, regionList);
+    files[wsDir + 'provider.tf'] = tfProjectProviderFile(region, env, multiRegion, regionList, aliasList);
     files[wsDir + 'backend.tf'] = tfProjectBackendFile(region, env);
     files[wsDir + 'main.tf'] = tfProjectWorkspaceMain(groupNames, groups, env);
 
@@ -465,7 +508,17 @@ function tfProjectRenderVariables(vars) {
     }).join('\n');
 }
 
-function tfProjectProviderFile(region, env, multiRegion, regionList) {
+function tfProjectDefaultTagsBlock(env, indent) {
+    return indent + 'default_tags {\n' +
+        indent + '  tags = {\n' +
+        indent + '    Environment = "' + env + '"\n' +
+        indent + '    ManagedBy   = "terraform"\n' +
+        indent + '    Source      = "former2"\n' +
+        indent + '  }\n' +
+        indent + '}\n';
+}
+
+function tfProjectProviderFile(region, env, multiRegion, regionList, aliasList) {
     var s =
         'terraform {\n' +
         '  required_version = ">= 1.3"\n\n' +
@@ -478,19 +531,33 @@ function tfProjectProviderFile(region, env, multiRegion, regionList) {
         '}\n\n' +
         'provider "aws" {\n' +
         '  region = "' + region + '"\n\n' +
-        '  default_tags {\n' +
-        '    tags = {\n' +
-        '      Environment = "' + env + '"\n' +
-        '      ManagedBy   = "terraform"\n' +
-        '      Source      = "former2"\n' +
+        tfProjectDefaultTagsBlock(env, '  ') +
+        '}\n';
+    (aliasList || []).forEach(function (rg) {
+        s += '\n' +
+            'provider "aws" {\n' +
+            '  alias  = "' + tfProjectSanitize(rg) + '"\n' +
+            '  region = "' + rg + '"\n\n' +
+            tfProjectDefaultTagsBlock(env, '  ') +
+            '}\n';
+    });
+    if (multiRegion) {
+        s += '\n# Discovered resources span ' + regionList.join(', ') + '.\n' +
+             '# ' + region + ' uses the default provider; resources in the other regions\n' +
+             '# carry `provider = aws.<alias>` and their module is passed the alias in main.tf.\n';
+    }
+    return s;
+}
+
+function tfProjectModuleProvidersFile(aliases) {
+    return 'terraform {\n' +
+        '  required_providers {\n' +
+        '    aws = {\n' +
+        '      source                = "hashicorp/aws"\n' +
+        '      configuration_aliases = [' + aliases.map(function (a) { return 'aws.' + a; }).join(', ') + ']\n' +
         '    }\n' +
         '  }\n' +
         '}\n';
-    if (multiRegion) {
-        s += '\n# Discovered resources span multiple regions: ' + regionList.join(', ') + '\n' +
-             '# Add aliased providers and set `provider = aws.<alias>` on the out-of-region resources.\n';
-    }
-    return s;
 }
 
 function tfProjectBackendFile(region, env) {
@@ -524,6 +591,15 @@ function tfProjectWorkspaceMain(groupNames, groups, env) {
         var external = Object.keys(gs.vars).filter(function (n) { return gs.vars[n].default === null; }).sort();
 
         var s = 'module "' + name + '" {\n  source = "../../modules/' + name + '"\n';
+        if (gs.aliases && Object.keys(gs.aliases).length) {
+            var al = Object.keys(gs.aliases).sort();
+            var pw = Math.max.apply(null, al.map(function (a) { return a.length + 4; }).concat([3]));
+            function pad(k) { return k + Array(pw - k.length + 1).join(' '); }
+            s += '\n  providers = {\n' +
+                 '    ' + pad('aws') + ' = aws\n' +
+                 al.map(function (a) { return '    ' + pad('aws.' + a) + ' = aws.' + a + '\n'; }).join('') +
+                 '  }\n';
+        }
         if (external.length) {
             s += '\n';
             var w = Math.max.apply(null, external.map(function (n) { return n.length; }));
@@ -572,5 +648,8 @@ function tfProjectReadme(env, region, regionList, groupNames, count, crossRefCou
         '  list literals and need a manual pass.\n' +
         (crossRefCount ? '- ' + crossRefCount + ' cross-module reference(s) were wired automatically in\n' +
         '  `workspaces/' + env + '/main.tf`; confirm each points at the right module output.\n' : '') +
-        (multiRegion ? '- Resources span multiple regions; see the note in `provider.tf`.\n' : '');
+        (multiRegion ? '- Resources span multiple regions. `' + region + '` is the default provider;\n' +
+            '  the rest have aliased `provider "aws"` blocks in `provider.tf`, each\n' +
+            '  out-of-region resource carries `provider = aws.<alias>`, and modules that\n' +
+            '  hold them declare `configuration_aliases` and are passed the alias in `main.tf`.\n' : '');
 }

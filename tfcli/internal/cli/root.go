@@ -10,7 +10,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
 	"github.com/virtualbeck/former2/tfcli/internal/awsclient"
@@ -19,12 +21,19 @@ import (
 )
 
 var (
-	flagRegion      string
-	flagProfile     string
-	flagDebug       bool
-	flagQuiet       bool
-	flagConcurrency int
+	flagRegion       string
+	flagAllUSRegions bool
+	flagProfile      string
+	flagDebug        bool
+	flagQuiet        bool
+	flagConcurrency  int
 )
+
+// usCommercialRegions is the set scanned by --all-us-regions, in the order they
+// are scanned. us-east-1 is first on purpose: former2 only queries global
+// resources (CloudFront, WAFV2 CLOUDFRONT scope, ...) when the active region is
+// us-east-1, and the multi-region merge keeps the first copy it sees.
+var usCommercialRegions = []string{"us-east-1", "us-east-2", "us-west-1", "us-west-2"}
 
 // Execute is the entry point.
 func Execute() {
@@ -38,6 +47,7 @@ func Execute() {
 	root.SetVersionTemplate("former2-tf {{.Version}}\n")
 	pf := root.PersistentFlags()
 	pf.StringVar(&flagRegion, "region", "", "AWS region to scan (default: from profile/env, then us-east-1)")
+	pf.BoolVar(&flagAllUSRegions, "all-us-regions", false, "scan every US commercial region ("+strings.Join(usCommercialRegions, ", ")+") and merge; overrides --region")
 	pf.StringVar(&flagProfile, "profile", "", "shared-config profile to use")
 	pf.BoolVar(&flagDebug, "debug", false, "verbose diagnostics")
 	pf.BoolVar(&flagQuiet, "quiet", false, "suppress progress and warnings")
@@ -51,9 +61,9 @@ func Execute() {
 	}
 }
 
-// newEngine builds the JS runtime with a live AWS client. resolvedRegion is the
-// region actually in effect.
-func newEngine(ctx context.Context) (*jsrt.Engine, string, *consoleLogger, error) {
+// loadAWSConfig resolves the shared AWS config (profile/env/region) and fails
+// fast when there are no usable credentials.
+func loadAWSConfig(ctx context.Context) (aws.Config, error) {
 	opts := []func(*awsconfig.LoadOptions) error{}
 	if flagRegion != "" {
 		opts = append(opts, awsconfig.WithRegion(flagRegion))
@@ -63,17 +73,25 @@ func newEngine(ctx context.Context) (*jsrt.Engine, string, *consoleLogger, error
 	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("load AWS config: %w", err)
+		return cfg, fmt.Errorf("load AWS config: %w", err)
+	}
+	if _, err := cfg.Credentials.Retrieve(ctx); err != nil {
+		return cfg, fmt.Errorf("no AWS credentials: %w\n"+
+			"configure a profile/env, or use `generate --from raw.json` / `project --from raw.json`", err)
+	}
+	return cfg, nil
+}
+
+// newEngine builds the JS runtime with a live AWS client. resolvedRegion is the
+// region actually in effect.
+func newEngine(ctx context.Context) (*jsrt.Engine, string, *consoleLogger, error) {
+	cfg, err := loadAWSConfig(ctx)
+	if err != nil {
+		return nil, "", nil, err
 	}
 	region := cfg.Region
 	if region == "" {
 		region = "us-east-1"
-	}
-
-	// fail fast if there are no usable credentials at all
-	if _, err := cfg.Credentials.Retrieve(ctx); err != nil {
-		return nil, "", nil, fmt.Errorf("no AWS credentials: %w\n"+
-			"configure a profile/env, or use `generate --from raw.json` / `project --from raw.json`", err)
 	}
 
 	client := awsclient.New(cfg.Credentials, region)

@@ -42,9 +42,51 @@ var console = {
     debug: function () { __hostLog("debug", Array.prototype.join.call(arguments, " ")); }
 };
 
+// --- URL shim ---------------------------------------------------------
+// goja has no global URL. The mapping corpus (datasync.js) only needs
+// protocol/hostname/host/port/pathname/search/hash off scheme://host/path
+// style location URIs, so a small hand parser is enough.
+if (typeof URL === "undefined") {
+    var URL = function (input) {
+        var str = "" + input;
+        var m = str.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*:)\/\/([^\/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/);
+        if (!m) {
+            // no authority component (e.g. "s3://" already handled above, or opaque)
+            var m2 = str.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*:)([^?#]*)(\?[^#]*)?(#.*)?$/);
+            if (!m2) { throw new TypeError("Invalid URL: " + str); }
+            this.protocol = m2[1];
+            this.host = this.hostname = "";
+            this.port = "";
+            this.pathname = m2[2] || "";
+            this.search = m2[3] || "";
+            this.hash = m2[4] || "";
+        } else {
+            this.protocol = m[1];
+            this.host = m[2];
+            var hp = m[2].split(":");
+            this.hostname = hp[0];
+            this.port = hp.length > 1 ? hp[1] : "";
+            this.pathname = m[3] || "";
+            this.search = m[4] || "";
+            this.hash = m[5] || "";
+        }
+        this.href = str;
+    };
+    URL.prototype.toString = function () { return this.href; };
+}
+
 // --- DOM / UI no-ops ----------------------------------------------------
 function blockUI() {}
 function unblockUI() {}
+
+// Quote an HCL attribute name unless it is already a bare identifier.
+// AWS tag keys routinely contain ':' '/' '.' '@' spaces etc, which break
+// `tofu fmt`/`init` when emitted raw inside a `tags = { ... }` block.
+function tfHclKey(key) {
+    key = "" + key;
+    if (/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(key)) { return key; }
+    return '"' + key.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
 
 function nav(str) {
     return str.replace(/\s/g, "").replace(/\,/g, "").replace(/\-/g, "").replace(/\&amp\;/g, "And");

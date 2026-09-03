@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -29,29 +28,27 @@ func allCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			eng, region, _, err := newEngine(ctx)
+			// step 1
+			fmt.Fprintln(os.Stderr, "[1/3] scanning ...")
+			log := newConsoleLogger(flagDebug, flagQuiet)
+			raw, _, err := scanRawResources(ctx, scanOpts, log)
 			if err != nil {
 				return err
 			}
-			defer eng.Close()
-
-			// step 1
-			fmt.Fprintf(os.Stderr, "[1/3] scanning %s ...\n", region)
-			start := time.Now()
-			n, err := eng.Scan(scanOpts)
-			if err != nil {
-				return fmt.Errorf("scan: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "      %d resources in %s\n", n, time.Since(start).Round(time.Second))
 			if rawOut != "" {
-				raw, err := eng.DumpRaw()
-				if err != nil {
-					return err
-				}
 				if err := os.WriteFile(rawOut, raw, 0o644); err != nil {
 					return err
 				}
 				fmt.Fprintf(os.Stderr, "      wrote %s\n", rawOut)
+			}
+
+			eng, _, err := newOfflineEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			if _, err := eng.LoadRaw(raw); err != nil {
+				return fmt.Errorf("load scanned resources: %w", err)
 			}
 
 			// map once

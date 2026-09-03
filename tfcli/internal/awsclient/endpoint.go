@@ -4,6 +4,26 @@ import (
 	"github.com/virtualbeck/former2/tfcli/internal/awsmodel"
 )
 
+// pinnedRegion lists services whose (control-plane) endpoint lives in exactly
+// one region no matter which region the user is scanning. For these we must
+// pin BOTH the hostname and the SigV4 signing region there — otherwise a scan
+// of, say, us-west-1 builds cur.us-west-1.amazonaws.com, which does not exist,
+// and the resources are silently missed.
+//
+// former2's own datatables.js does this for GlobalAccelerator and CostExplorer
+// via serviceoptions.region; the rest are equally global.
+var pinnedRegion = map[string]string{
+	"GlobalAccelerator":            "us-west-2",
+	"NetworkManager":               "us-west-2",
+	"Route53RecoveryControlConfig": "us-west-2",
+	"Route53RecoveryReadiness":     "us-west-2",
+	"CostExplorer":                 "us-east-1",
+	"CUR":                          "us-east-1",
+	"Route53Domains":               "us-east-1",
+	"Organizations":                "us-east-1",
+	"Shield":                       "us-east-1",
+}
+
 // endpoint returns the base URL and the region to use for SigV4 signing.
 //
 // former2's sdkcall applies a few hard region overrides; global services sign
@@ -14,18 +34,8 @@ func endpoint(sdkClass string, m awsmodel.Metadata, region string) (baseURL, sig
 	if signingName == "" {
 		signingName = prefix
 	}
-	signRegion = region
 
-	switch sdkClass {
-	case "GlobalAccelerator":
-		signRegion = "us-west-2"
-	case "CostExplorer", "CUR", "Route53Domains":
-		signRegion = "us-east-1"
-	case "Organizations", "WAF", "Shield":
-		signRegion = "us-east-1"
-	}
-
-	// Global services: a fixed hostname, signed against us-east-1 (or the
+	// Global services: a single fixed hostname, signed against us-east-1 (the
 	// partition-global pseudo-region, which us-east-1 satisfies for aws).
 	switch sdkClass {
 	case "IAM":
@@ -36,20 +46,17 @@ func endpoint(sdkClass string, m awsmodel.Metadata, region string) (baseURL, sig
 		return "https://cloudfront.amazonaws.com", "us-east-1", "cloudfront"
 	case "WAF":
 		return "https://waf.amazonaws.com", "us-east-1", "waf"
-	case "Organizations":
-		return "https://organizations.us-east-1.amazonaws.com", "us-east-1", "organizations"
-	case "Shield":
-		return "https://shield.us-east-1.amazonaws.com", "us-east-1", "shield"
 	}
 
-	if m.GlobalEndpoint != "" && region == "" {
-		return "https://" + m.GlobalEndpoint, "us-east-1", signingName
+	// Single-region control planes: ignore the scan region entirely.
+	if pin, ok := pinnedRegion[sdkClass]; ok {
+		region = pin
 	}
 
 	if region == "" {
 		region = "us-east-1"
-		signRegion = "us-east-1"
 	}
+	signRegion = region
 
 	host := prefix + "." + region + ".amazonaws.com"
 
