@@ -1,9 +1,57 @@
 package jsrt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// TestCycleDetectionScalesPastFiveHundred: former2's circular-reference guard
+// used to switch OFF entirely above 500 tracked resources, so two resources
+// that reference each other (e.g. a pair of security groups that each allow
+// the other) both got rewritten into `${...id}` refs - a dependency cycle
+// `tofu validate` rejects. With the memoised detector it stays on.
+func TestCycleDetectionScalesPastFiveHundred(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generates 500+ resources; former2's correlation loop is ~O(n^2)")
+	}
+	e := newTestEngine(t)
+	defer e.Close()
+
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; i < 505; i++ {
+		fmt.Fprintf(&b, `{"f2id":"vpc-%04d","f2type":"ec2.vpc","f2region":"us-east-1","f2data":{"VpcId":"vpc-%04d","CidrBlock":"10.%d.%d.0/24","InstanceTenancy":"default"}},`,
+			i, i, i/256, i%256)
+	}
+	b.WriteString(`{"f2id":"sg-aaaa","f2type":"ec2.securitygroup","f2region":"us-east-1","f2data":{"GroupId":"sg-aaaa","GroupName":"a","Description":"a","VpcId":"vpc-0000","IpPermissions":[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"UserIdGroupPairs":[{"GroupId":"sg-bbbb"}]}]}},`)
+	b.WriteString(`{"f2id":"sg-bbbb","f2type":"ec2.securitygroup","f2region":"us-east-1","f2data":{"GroupId":"sg-bbbb","GroupName":"b","Description":"b","VpcId":"vpc-0000","IpPermissions":[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"UserIdGroupPairs":[{"GroupId":"sg-aaaa"}]}]}}]`)
+
+	if _, err := e.LoadRaw([]byte(b.String())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Prepare(PrepareOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tf, err := e.GenerateTf()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := tf[strings.Index(tf, `resource "aws_security_group" "EC2SecurityGroup" {`):]
+	a = a[:strings.Index(a, "\n}\n")]
+	sg2 := tf[strings.Index(tf, `resource "aws_security_group" "EC2SecurityGroup2" {`):]
+	sg2 = sg2[:strings.Index(sg2, "\n}\n")]
+
+	aRefs2 := strings.Contains(a, "aws_security_group.EC2SecurityGroup2.id")
+	sg2Refs1 := strings.Contains(sg2, "aws_security_group.EC2SecurityGroup.id")
+	if aRefs2 && sg2Refs1 {
+		t.Fatalf("mutual references => cycle survived detection:\nA:\n%s\nB:\n%s", a, sg2)
+	}
+	if !aRefs2 && !sg2Refs1 {
+		t.Fatalf("expected one direction of the reference to be wired:\nA:\n%s\nB:\n%s", a, sg2)
+	}
+}
 
 type testLogger struct{ t *testing.T }
 

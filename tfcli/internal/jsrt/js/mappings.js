@@ -489,12 +489,23 @@ function circularReferenceFind(checkindex, references, outputtype) {
     return references;
 }
 
+// "<type>:<checkindex>" -> { ver: edge-count when computed, reach: [indices] }.
+// circularReferenceFind() depends only on checkindex and the relationship edge
+// list, and edges are append-only within a pass, so the edge count is a safe
+// version. Reset in compileOutputs() when tracked_relationships is cleared.
+var _circRefCache = {};
+
 function circularReferenceFound(checkindex, baseindex, outputtype) {
     if (checkindex == baseindex) {
         return true;
     }
 
-    if (tracked_resources.length > 500) { // circuit breaker
+    // Safety valve for pathological accounts. Was 500 - far too low: on any
+    // real account past that former2 stopped detecting cycles entirely and
+    // happily emitted `tofu validate`-breaking A->B->A references (e.g. an
+    // aws_s3_bucket and its aws_s3_bucket_* satellites). The memo below keeps
+    // the check affordable well past this.
+    if (tracked_resources.length > 20000) {
         return false;
     }
 
@@ -503,11 +514,15 @@ function circularReferenceFound(checkindex, baseindex, outputtype) {
         mapped_output_type = 'tf';
     }
 
-    if (circularReferenceFind(checkindex, [], mapped_output_type).includes(baseindex)) {
-        return true;
+    var edges = tracked_relationships[mapped_output_type];
+    var key = mapped_output_type + ':' + checkindex;
+    var cached = _circRefCache[key];
+    if (!cached || cached.ver !== edges.length) {
+        cached = { ver: edges.length, reach: circularReferenceFind(checkindex, [], mapped_output_type) };
+        _circRefCache[key] = cached;
     }
 
-    return false;
+    return cached.reach.indexOf(baseindex) !== -1;
 }
 
 function processCfnParameter(param, spacing, index, tracked_resources) {
@@ -4215,6 +4230,7 @@ function compileOutputs(tracked_resources, cfn_deletion_policy) {
         'cfn': [],
         'tf': []
     };
+    _circRefCache = {}; // relationship graph just reset - drop the reachability memo
     for (var i = 0; i < outputs.length; i++) {
         if (!services['go'].includes(outputs[i].service)) {
             services['go'].push(outputs[i].service);
