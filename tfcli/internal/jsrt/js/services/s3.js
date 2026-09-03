@@ -1279,12 +1279,14 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 'region': obj.region,
                 'service': 's3',
                 'terraformType': terraformType,
-                'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'tf': tf, 'iam': {} },
-                'returnValues': {
-                    'Terraform': {
-                        'id': obj.data.Name
-                    }
-                }
+                'options': { 'boto3': {}, 'go': {}, 'cfn': {}, 'cli': {}, 'tf': tf, 'iam': {} }
+                // No returnValues: every aws_s3_bucket_* satellite here shares the
+                // parent bucket's name as its Terraform id. Advertising that made
+                // the bucket's own `bucket = "<name>"` resolve to a satellite and
+                // the satellite's `bucket` resolve back to the bucket - a
+                // dependency cycle that `tofu validate` rejects. Nothing needs to
+                // reference these satellites; the one-way bucket dependency comes
+                // from the parent aws_s3_bucket's returnValues instead.
             });
         };
 
