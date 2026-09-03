@@ -157,6 +157,55 @@ func TestGeneratePipelineOffline(t *testing.T) {
 	}
 }
 
+// An aws_s3_bucket and its aws_s3_bucket_* satellites all carry the bucket
+// name as their Terraform id. former2 must not turn that into a two-way
+// reference (bucket -> encryption config -> bucket), which `tofu validate`
+// rejects as a cycle.
+func TestS3BucketNoReferenceCycle(t *testing.T) {
+	e := newTestEngine(t)
+	defer e.Close()
+
+	const raw = `[{"f2id":"my-bucket","f2type":"s3.bucket","f2region":"us-east-1","f2data":{
+	  "Name":"my-bucket",
+	  "Versioning":{"Status":"Enabled"},
+	  "Encryption":{"ServerSideEncryptionConfiguration":{"Rules":[
+	    {"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}}
+	}}]`
+	if _, err := e.LoadRaw([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Prepare(PrepareOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := e.GenerateProject("prod", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3 := files["modules/s3/main.tf"]
+	if s3 == "" {
+		t.Fatalf("no modules/s3/main.tf in %v", keysOf(files))
+	}
+	// satellite -> bucket dependency is fine and expected
+	if !strings.Contains(s3, "bucket = aws_s3_bucket.S3Bucket.id") {
+		t.Fatalf("SSE/versioning config not wired to the bucket:\n%s", s3)
+	}
+	// the bucket must NOT depend on any of its satellites
+	bkt := s3[strings.Index(s3, `resource "aws_s3_bucket" "S3Bucket" {`):]
+	bkt = bkt[:strings.Index(bkt, "\n}\n")]
+	if strings.Contains(bkt, "aws_s3_bucket_") {
+		t.Fatalf("aws_s3_bucket references a satellite (cycle):\n%s", bkt)
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestMultiRegionProviderAlignment(t *testing.T) {
 	e := newTestEngine(t)
 	defer e.Close()
