@@ -1124,7 +1124,7 @@ async function updateDatatableSecurityIdentityAndComplianceWAFAndShield() {
                         f2id: webAcl.ARN + ' ' + resourceArn,
                         f2type: 'waf.v2webaclassociation',
                         f2data: {
-                            'WebACLArn': data.WebACL,
+                            'WebACLArn': webAcl.ARN,
                             'ResourceArn': resourceArn
                         },
                         f2region: region,
@@ -1143,7 +1143,7 @@ async function updateDatatableSecurityIdentityAndComplianceWAFAndShield() {
                         f2id: webAcl.ARN + ' ' + resourceArn,
                         f2type: 'waf.v2webaclassociation',
                         f2data: {
-                            'WebACLArn': data.WebACL,
+                            'WebACLArn': webAcl.ARN,
                             'ResourceArn': resourceArn
                         },
                         f2region: region,
@@ -1819,10 +1819,21 @@ async function updateDatatableSecurityIdentityAndComplianceWAFAndShield() {
 function wafv2TfKey(key) {
     return key
         .replace(/ARN/g, 'Arn')
+        // the AWS provider treats these as single words: CloudWatchMetricsEnabled
+        // -> cloudwatch_metrics_enabled, not cloud_watch_metrics_enabled
+        .replace(/CloudWatch/g, 'Cloudwatch')
         .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
         .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
         .toLowerCase();
 }
+
+// tfkeys whose value is a repeatable nested block in the AWS provider, so an
+// array must render as `name { } name { }`, not `name = [ ... ]`. A Set makes
+// processTfParameter emit repeated blocks.
+var WAFV2_BLOCK_LISTS = {
+    'text_transformation': 1, 'rule': 1, 'statement': 1, 'excluded_rule': 1,
+    'rule_action_override': 1, 'rule_label': 1, 'label': 1, 'custom_response_body': 1
+};
 
 function wafv2ToTf(node) {
     if (Array.isArray(node)) {
@@ -1837,7 +1848,11 @@ function wafv2ToTf(node) {
             else if (tfkey == "statements") tfkey = "statement";
             else if (tfkey == "excluded_rules") tfkey = "excluded_rule";
             else if (tfkey == "rule_action_overrides") tfkey = "rule_action_override";
-            out[tfkey] = wafv2ToTf(node[key]);
+            var val = wafv2ToTf(node[key]);
+            if (Array.isArray(val) && WAFV2_BLOCK_LISTS[tfkey]) {
+                val = new Set(val);
+            }
+            out[tfkey] = val;
         });
         return out;
     }

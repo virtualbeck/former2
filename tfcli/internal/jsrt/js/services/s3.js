@@ -1240,8 +1240,8 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
         // it inline on AWS::S3::Bucket).
         var s3tftags = stripAWSTags(obj.data.Tags);
         if (Array.isArray(s3tftags)) {
-            var s3tagmap = {};
-            s3tftags.forEach(tag => { s3tagmap[tag.Key] = tag.Value; });
+            var s3tagmap = new Map();
+            s3tftags.forEach(tag => { s3tagmap.set(tag.Key, tag.Value); });
             reqParams.tf['tags'] = s3tagmap;
         }
 

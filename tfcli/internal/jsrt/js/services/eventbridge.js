@@ -1012,8 +1012,13 @@ service_mapping_functions.push(function(reqParams, obj, tracked_resources){
                 reqParams.tf['input_path'] = obj.data.InputPath;
                 reqParams.tf['role_arn'] = obj.data.RoleArn;
                 if (target.InputTransformer) {
+                    var inputPaths = null;
+                    if (target.InputTransformer.InputPathsMap) {
+                        // input_paths is map(string), not a block
+                        inputPaths = new Map(Object.entries(target.InputTransformer.InputPathsMap));
+                    }
                     reqParams.tf['input_transformer'] = {
-                        'input_paths': target.InputTransformer.InputPathsMap,
+                        'input_paths': inputPaths,
                         'input_template': target.InputTransformer.InputTemplate
                     };
                 }
